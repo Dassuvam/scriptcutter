@@ -313,3 +313,4 @@ kbd { font: 11px var(--font-mono); border: 1px solid var(--rule); border-radius:
 .help-colours { display: grid; gap: 8px; margin: 8px 0; }
 .help-colours div { display: flex; gap: 10px; align-items: baseline; }
 .link-button { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.help-body a { color: var(--accent); }

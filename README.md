@@ -74,4 +74,11 @@ Your original timeline is never changed. Click **Help** (or press `?`) inside Sc
 
 ---
 
+## Authors
+
+- **Suvam Das** - dassuvam2005@gmail.com
+- **Aswini Prasad Rout** - aswiniprasadrout@gmail.com
+
+Questions or problems? Email dassuvam2005@gmail.com
+
 Developers: see [DEVELOPMENT.md](DEVELOPMENT.md). License: MIT.

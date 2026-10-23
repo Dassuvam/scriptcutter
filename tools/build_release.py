@@ -14,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 INCLUDE = ["cutter", "web", "resolve", "tests", "cli.py", "launcher.py", "install.py", "install.sh", "install.ps1",
            "uninstall.py", "Install ScriptCutter.command", "Open ScriptCutter.command", "Install ScriptCutter.bat",
-           "Open ScriptCutter.bat", "README.md", "CHANGELOG.md", "LICENSE", "VERSION"]
+           "Open ScriptCutter.bat", "README.md", "AUTHORS.md", "CHANGELOG.md", "LICENSE", "VERSION"]
 EXECUTABLE = (".command", ".sh", ".py")
 
 
