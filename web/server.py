@@ -25,13 +25,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from cutter import learn, llm, pipeline, resolve_api  # noqa: E402
+from cutter import __version__, learn, llm, pipeline, resolve_api  # noqa: E402
 from cutter.analyze import POLICIES  # noqa: E402
 from cutter.export import export_edl, export_report  # noqa: E402
 from cutter.media import cache_dir_for, find_bin  # noqa: E402
 from cutter.transcribe import find_whisper_cli, installed_models  # noqa: E402
 
-HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+                 ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png"}
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 RESOLVE_LOCK = threading.Lock()  # the Resolve API is not thread-safe
@@ -163,6 +165,15 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, data, code=200):
         self._send(code, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+    def _static(self, rel: str):
+        """Serve a file from web/static, refusing anything outside it."""
+        full = os.path.realpath(os.path.join(STATIC, urllib.parse.unquote(rel)))
+        if not full.startswith(os.path.realpath(STATIC) + os.sep) or not os.path.isfile(full):
+            return self._json({"error": "not found"}, 404)
+        with open(full, "rb") as f:
+            body = f.read()
+        return self._send(200, body, CONTENT_TYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
+
     def _stream(self, path: str):
         """Serve the source video with HTTP Range so the browser can seek."""
         size = os.path.getsize(path)
@@ -215,12 +226,14 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in u.path.split("/") if p]
         try:
             if u.path in ("/", "/index.html"):
-                with open(HTML, "rb") as f:
-                    return self._send(200, f.read(), "text/html; charset=utf-8")
+                return self._static("index.html")
+            if u.path.startswith("/static/"):
+                return self._static(u.path[len("/static/"):])
             if u.path == "/api/status":
                 with RESOLVE_LOCK:
                     st = resolve_api.status()
                 st.update(_models_info())
+                st["app_version"] = __version__
                 return self._json(st)
             if len(parts) == 3 and parts[:2] == ["api", "job"]:
                 j = self._job(parts[2])
@@ -352,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def run(port: int = 7870):
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"ScriptCutter v2 running at http://127.0.0.1:{port}", flush=True)
+    print(f"ScriptCutter {__version__} running at http://127.0.0.1:{port}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

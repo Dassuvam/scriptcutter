@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ScriptCutter</title>
+  <link rel="icon" href="/static/img/logo.svg">
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wordmark"><b>ScriptCutter</b><span>retake-aware cutting for DaVinci Resolve</span></div>
+    <div class="topbar-right">
+      <div class="status"><span class="status-dot" id="statusDot"></span><span id="statusText">Looking for DaVinci Resolve…</span></div>
+      <button class="icon-button" id="themeToggle" title="Day / night">☾</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section>
+      <!-- setup -->
+      <div class="card">
+        <div class="hero"><img src="/static/img/hero.svg" alt=""></div>
+        <h1 class="card-title">Cut the retakes,<br>keep the story.</h1>
+        <p class="card-sub">Blue is sure. Brown means "please look". Nothing uncertain is cut.</p>
+
+        <div class="kicker">Step 1 · Source</div>
+        <div class="segmented" id="sourceSwitch">
+          <button data-value="resolve" class="is-on">Resolve timeline</button>
+          <button data-value="file">Video file</button>
+        </div>
+        <div id="sourceResolve">
+          <label class="field-label" for="track">Video track to read</label>
+          <input type="number" id="track" min="1" value="1">
+          <div class="hint">Your timeline is never changed. A new one is created.</div>
+        </div>
+        <div id="sourceFile" hidden>
+          <label class="field-label" for="filePath">Path to the raw recording</label>
+          <input type="text" id="filePath" placeholder="/Users/you/Movies/raw.mov">
+          <div class="hint">Drag the file from Finder into this box, or Option-right-click it → Copy as Pathname.</div>
+        </div>
+
+        <div class="kicker">Step 2 · Footage</div>
+        <div class="segmented" id="footageSwitch">
+          <button data-value="talking_head" class="is-on">Talking head</button>
+          <button data-value="screen">Screen recording</button>
+        </div>
+        <div class="hint" id="footageHint"></div>
+
+        <div class="kicker">Step 3 · How sure before cutting?</div>
+        <div class="segmented" id="policySwitch">
+          <button data-value="cautious">Cautious</button>
+          <button data-value="balanced" class="is-on">Balanced</button>
+          <button data-value="aggressive">Aggressive</button>
+        </div>
+
+        <details>
+          <summary>Language &amp; speech</summary>
+          <div class="grid-2">
+            <div>
+              <label class="field-label" for="language">Spoken language</label>
+              <select id="language">
+                <option value="auto">Auto-detect</option><option value="en">English</option><option value="hi">Hindi / Hinglish</option>
+                <option value="bn">Bengali</option><option value="ta">Tamil</option><option value="te">Telugu</option>
+                <option value="mr">Marathi</option><option value="ur">Urdu</option><option value="es">Spanish</option>
+                <option value="pt">Portuguese</option><option value="fr">French</option><option value="de">German</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="textMode">Analyse text as</label>
+              <select id="textMode">
+                <option value="auto">Auto</option><option value="original">Original language</option><option value="english">English translation</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div>
+              <label class="field-label" for="model">Whisper model</label>
+              <select id="model"><option value="auto">Best installed</option></select>
+            </div>
+            <div>
+              <label class="field-label" for="sensitivity">Speech sensitivity (dB)</label>
+              <input type="number" id="sensitivity" value="0" step="1" min="-10" max="10">
+            </div>
+          </div>
+          <div class="hint">"Auto" analyses non-English speech through an English translation: retakes come out as near-identical sentences.</div>
+        </details>
+
+        <details>
+          <summary>Pace &amp; padding</summary>
+          <div class="grid-3">
+            <div><label class="field-label" for="maxPause">Keep pauses up to (s)</label><input type="number" id="maxPause" value="0.45" step="0.05" min="0.1" max="2"></div>
+            <div><label class="field-label" for="headPad">Head pad (s)</label><input type="number" id="headPad" value="0.10" step="0.02" min="0" max="0.5"></div>
+            <div><label class="field-label" for="tailPad">Tail pad (s)</label><input type="number" id="tailPad" value="0.16" step="0.02" min="0" max="0.6"></div>
+          </div>
+          <div class="hint">These also work after analysis: the cut updates instantly.</div>
+        </details>
+
+        <details>
+          <summary>AI second opinion (optional)</summary>
+          <label class="field-label" for="provider">Provider</label>
+          <select id="provider"><option value="">Off: local analysis only</option></select>
+          <div id="aiFields" hidden>
+            <label class="field-label" for="llmModel">Model</label>
+            <input type="text" id="llmModel">
+            <div id="keyField">
+              <label class="field-label" for="apiKey">API key (stays in this browser)</label>
+              <input type="password" id="apiKey" autocomplete="off">
+            </div>
+            <div id="urlField" hidden>
+              <label class="field-label" for="llmUrl">Endpoint URL</label>
+              <input type="text" id="llmUrl">
+            </div>
+            <label class="field-label" for="topic">What is the video about?</label>
+            <textarea id="topic" placeholder="e.g. Hindi tutorial on making animated Instagram videos"></textarea>
+            <div class="hint">The AI only reviews. Anything only the AI wants removed stays brown and is never cut.</div>
+          </div>
+        </details>
+
+        <details>
+          <summary>Timeline output</summary>
+          <label class="check"><input type="checkbox" id="markers" checked><span>Markers on brown clips<small>A marker with the reason. Jump between them with Shift + ↑ / ↓.</small></span></label>
+          <label class="check"><input type="checkbox" id="checkerboard"><span>Overlapping A/B cuts<small>Alternate clips on V1/A1 and V2/A2 with a small overlap.</small></span></label>
+          <div class="grid-2" id="overlapField" hidden>
+            <div><label class="field-label" for="overlap">Overlap (frames)</label><input type="number" id="overlap" value="3" min="1" max="12"></div>
+          </div>
+          <label class="check"><input type="checkbox" id="voiceIsolation"><span>AI Voice Isolation<small>DaVinci Resolve Studio only.</small></span></label>
+        </details>
+
+        <button class="button button-primary button-block" id="analyse">Analyse</button>
+        <div class="error" id="error"></div>
+      </div>
+
+      <!-- progress -->
+      <div class="card" id="progressCard" hidden>
+        <div class="kicker" style="margin-top:0">Working</div>
+        <h2 id="stage">Starting…</h2>
+        <div class="progress"><div id="progressBar"></div></div>
+        <div class="log" id="log"></div>
+      </div>
+    </section>
+
+    <!-- review -->
+    <section class="card">
+      <span class="spine">review</span>
+      <div class="empty" id="emptyState">
+        <img src="/static/img/hero.svg" alt="">
+        <h2>Nothing analysed yet</h2>
+        <p>Pick a source and press Analyse. You will check every decision here before anything reaches Resolve.</p>
+      </div>
+
+      <div class="review-body" id="reviewBody" hidden>
+        <div class="stats" id="stats"></div>
+        <div class="legend">
+          <span><span class="swatch keep"></span>Blue: keep (sure)</span>
+          <span><span class="swatch review"></span>Brown: kept, please check</span>
+          <span><span class="swatch cut"></span>Cut</span>
+          <span><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Space</kbd> play · <kbd>1</kbd> keep · <kbd>2</kbd> review · <kbd>3</kbd> cut · <kbd>0</kbd> auto</span>
+        </div>
+        <div class="toolbar">
+          <div class="segmented compact" id="filterSwitch">
+            <button data-value="all" class="is-on">All</button><button data-value="review">Brown</button>
+            <button data-value="remove">Cut</button><button data-value="keep">Blue</button>
+          </div>
+          <div class="segmented compact" id="policySwitchReview">
+            <button data-value="cautious">Cautious</button><button data-value="balanced">Balanced</button><button data-value="aggressive">Aggressive</button>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <button class="button button-small" data-bulk="keep">All brown → Keep</button>
+            <button class="button button-small" data-bulk="remove">All brown → Cut</button>
+          </div>
+          <div class="segmented compact" id="previewSwitch">
+            <button data-value="video" class="is-on">▶ Video</button><button data-value="audio">▶ Audio only</button>
+          </div>
+        </div>
+        <div class="preview" id="preview" hidden><video id="video" playsinline preload="metadata"></video></div>
+        <div id="files"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="dock" id="dock" hidden>
+    <div class="dock-row">
+      <div class="dock-summary" id="dockSummary"></div>
+      <div class="dock-actions">
+        <input type="text" id="timelineName" placeholder="New timeline name">
+        <button class="button button-small" id="exportButton">Export EDL + report</button>
+        <button class="button button-small button-accent" id="buildButton">Create timeline in Resolve</button>
+      </div>
+    </div>
+    <div class="toast" id="toast" hidden></div>
+  </footer>
+
+  <audio id="audio" preload="none"></audio>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -43,7 +43,6 @@ def build_clips(decisions: list, regions: list, env, settings: dict = None,
     s.update(settings or {})
     lo, hi = source_range or (0.0, env.duration)
 
-    by_id = {d["id"]: d for d in decisions}
     units, removed = [], []
 
     # phrase-level items
