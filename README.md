@@ -21,6 +21,12 @@ Installs ffmpeg + whisper-cpp, downloads `ggml-small.bin` and the 885 KB Silero 
 3. Review: every line shows Keep / Review / Cut with a reason. ▶ plays the line, and "hear the later take" plays the take it was compared against. Keys: ↑↓, Space, 1/2/3.
 4. Press **Create timeline in Resolve**, or export an EDL + JSON report.
 
+**Extras**
+- **Learns your taste:** each time you create a timeline, your Keep/Cut overrides are saved locally (`~/Library/Application Support/ScriptCutterV2/feedback.json`). Once you've corrected the same kind of flag 4 or more times, it adjusts automatically: kinds you always cut get auto-cut, and kinds you always keep stop being flagged.
+- **Video preview:** ▶ plays the real footage (or switch to audio only). This is useful for brown screen-recording sections.
+- **Bulk:** "All brown → Keep / Cut" in one click.
+- **Retro 95 theme:** button in the top-right corner.
+
 CLI: `python3 cli.py analyze --video raw.mp4 --edl cut.edl` · `python3 cli.py resolve`
 
 ## Why v1 struggled (and what changed)

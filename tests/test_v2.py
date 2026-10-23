@@ -202,6 +202,18 @@ class LLMParse(unittest.TestCase):
         self.assertEqual(items[0]["id"], "p0002")
 
 
+class LearnTests(unittest.TestCase):
+    def test_learns_to_cut_a_category(self):
+        from cutter import learn
+        learn.PATH = os.path.join(tempfile.mkdtemp(), "fb.json")
+        decs = [{"id": f"p{i}", "reason": "Sits inside a section that was re-recorded at 1:00", "confidence": 0.55,
+                 "user_action": "remove"} for i in range(5)]
+        self.assertEqual(learn.record(decs, lambda d: "review"), 5)
+        fresh = [{"id": "x", "reason": "Sits inside a section that was re-recorded at 2:00", "confidence": 0.55}]
+        learn.apply(fresh)
+        self.assertGreaterEqual(fresh[0]["confidence"], 0.75)  # now auto-cut under Balanced
+
+
 @unittest.skipUnless(shutil.which("say") and (shutil.which("whisper-cli") or os.path.exists("/opt/homebrew/bin/whisper-cli")),
                      "needs macOS say + whisper-cli")
 class EndToEnd(unittest.TestCase):

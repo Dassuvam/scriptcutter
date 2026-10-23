@@ -25,7 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from cutter import llm, pipeline, resolve_api  # noqa: E402
+from cutter import learn, llm, pipeline, resolve_api  # noqa: E402
+from cutter.analyze import POLICIES  # noqa: E402
 from cutter.export import export_edl, export_report  # noqa: E402
 from cutter.media import cache_dir_for, find_bin  # noqa: E402
 from cutter.transcribe import find_whisper_cli, installed_models  # noqa: E402
@@ -47,6 +48,7 @@ class Job:
         self.sources, self.analyses, self.result = [], {}, None
         self.timeline_name = ""
         self.builds = []
+        self.recorded = {}
         self.created = time.time()
 
     def public(self) -> dict:
@@ -112,12 +114,13 @@ class Job:
                 if not any(d["end"] > r0 and d["start"] < r1 for r0, r1 in ranges):
                     continue
                 decs.append({k: d.get(k) for k in ("id", "start", "end", "kind", "text", "confidence", "reason",
-                                                   "ref", "action", "user_action", "parent", "llm_only")})
+                                                   "ref", "action", "user_action", "parent", "llm_only", "learned")})
             decs.sort(key=lambda d: (d["start"], d["kind"] != "phrase"))
             files.append({"path": path, "name": a["name"], "language": a["language"], "translated": a["translated"],
+                          "has_video": a["info"]["has_video"],
                           "model": a["model"], "levels": a["levels"], "llm": a.get("llm"), "decisions": decs,
                           "duration": a["info"]["duration"]})
-        return {"job": self.public(), "files": files, "timeline_name": self.timeline_name,
+        return {"job": self.public(), "files": files, "timeline_name": self.timeline_name, "learned": learn.summary(),
                 "settings": {k: v for k, v in self.settings.items() if k != "llm_api_key"}}
 
 
@@ -160,6 +163,41 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, data, code=200):
         self._send(code, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+    def _stream(self, path: str):
+        """Serve the source video with HTTP Range so the browser can seek."""
+        size = os.path.getsize(path)
+        ctype = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime"}.get(
+            os.path.splitext(path)[1].lower(), "application/octet-stream")
+        start, end = 0, size - 1
+        rng = self.headers.get("Range", "")
+        if rng.startswith("bytes="):
+            a, _, b = rng[6:].split(",")[0].partition("-")
+            if a:
+                start = int(a)
+                end = int(b) if b else min(size - 1, start + 8 * 1024 * 1024)
+            elif b:
+                start = max(0, size - int(b))
+        end = min(end, size - 1)
+        self.send_response(206 if rng else 200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start + 1
+            try:
+                while left > 0:
+                    chunk = f.read(min(1 << 20, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
         try:
@@ -192,6 +230,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not j or j.state != "done":
                     return self._json({"error": "analysis not finished"}, 409)
                 return self._json(j.review_payload())
+            if u.path == "/api/video":
+                j = self._job(q.get("job", [""])[0])
+                path = q.get("path", [""])[0]
+                if not j or path not in j.analyses:
+                    return self._json({"error": "unknown source"}, 404)
+                return self._stream(path)
             if u.path == "/api/audio":
                 j = self._job(q.get("job", [""])[0])
                 path = q.get("path", [""])[0]
@@ -233,6 +277,15 @@ class Handler(BaseHTTPRequestHandler):
                             d["user_action"] = want if want in ("keep", "review", "remove") else None
                     j.replan()
                     return self._json(j.review_payload())
+                if action == "bulk":
+                    # e.g. {"from": "review", "action": "remove"}: every brown line at once
+                    src, want = body.get("from"), body.get("action")
+                    for a in j.analyses.values():
+                        for d in a["decisions"]:
+                            if d.get("action") == src and not d.get("user_action"):
+                                d["user_action"] = want if want in ("keep", "review", "remove") else None
+                    j.replan()
+                    return self._json(j.review_payload())
                 if action == "settings":
                     for k in ("policy", "max_pause", "head_pad", "tail_pad"):
                         if k in body:
@@ -261,6 +314,21 @@ class Handler(BaseHTTPRequestHandler):
                             voice_isolation=bool(body.get("voice_isolation")),
                             markers=bool(body.get("markers", True)), log=j.rep.log)
                     j.builds.append(res)
+                    # remember your overrides so future analyses match your taste
+                    remove_at, review_at = POLICIES.get(j.settings["policy"], POLICIES["balanced"])
+
+                    def tool_action(d):
+                        c = d["confidence"]
+                        a = "remove" if c >= remove_at else ("review" if c >= review_at else "keep")
+                        return "review" if a == "remove" and d.get("llm_only") else a
+                    fresh_choices = [d for a in j.analyses.values() for d in a["decisions"]
+                                     if d.get("user_action") and j.recorded.get(d["id"]) != d["user_action"]]
+                    taught = learn.record(fresh_choices, tool_action)
+                    for d in fresh_choices:
+                        j.recorded[d["id"]] = d["user_action"]
+                    if taught:
+                        j.rep.log(f"Learned from {taught} of your choices (used on the next analysis)")
+                    res["learned_from"] = taught
                     j.rep.log(f"Created timeline '{res['timeline']}' ({res['items']} items, "
                               f"{res['review_markers']} review markers)")
                     return self._json(res)

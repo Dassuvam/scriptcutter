@@ -95,12 +95,67 @@
   .toast.bad { background: rgba(224,93,93,.12); border-color: rgba(224,93,93,.45); }
   .keys { font-size: 12px; color: var(--dim); }
   kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); }
+  #previewBox { position: sticky; top: 64px; z-index: 3; margin-bottom: 12px; background: #000; border-radius: 8px; overflow: hidden; }
+  #previewBox video { display: block; width: 100%; max-height: 300px; background: #000; }
+  .learned { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+  .learned b { color: var(--accent); }
+  .tbtn { font-size: 12px; padding: 5px 10px; }
+  .themebtn { margin-left: 10px; font-size: 12px; padding: 5px 10px; }
+
+  /* ---------- Retro 95 theme ---------- */
+  body.retro {
+    --bg: #008080; --panel: #c0c0c0; --panel2: #ffffff; --line: #808080; --text: #000; --muted: #222; --dim: #555;
+    --accent: #000080; --blue: #0000a8; --brown: #8b4513; --brown-bg: #ffffcc; --red: #a00; --ok: #008000; --radius: 0;
+    font: 12px/1.4 Tahoma, Geneva, Verdana, sans-serif; -webkit-font-smoothing: none;
+  }
+  body.retro header { background: linear-gradient(90deg, #000080, #1084d0); color: #fff; border: 0; padding: 6px 12px; }
+  body.retro .brand h1 { font-size: 14px; }
+  body.retro .brand h1::before { content: "✂ "; }
+  body.retro .brand h1::after { content: ".exe"; font-weight: normal; }
+  body.retro .brand span { color: #dfe6ff; }
+  body.retro .pill { background: #c0c0c0; color: #000; border-radius: 0; border: 1px solid; border-color: #808080 #fff #fff #808080; }
+  body.retro .card, body.retro footer { background: #c0c0c0; border: 2px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px #808080, inset 1px 1px #dfdfdf; }
+  body.retro .card { padding: 0 10px 12px; }
+  body.retro .card h2 { margin: 2px -8px 10px; padding: 3px 6px; background: linear-gradient(90deg, #000080, #1084d0); color: #fff; font-size: 12px; letter-spacing: 0; text-transform: none; display: flex; justify-content: space-between; }
+  body.retro .card h2::after { content: "_ □ ×"; letter-spacing: 6px; font-weight: normal; }
+  body.retro #review { padding-top: 10px; }
+  body.retro .btn, body.retro .seg button, body.retro .acts button, body.retro .play {
+    background: #c0c0c0; color: #000; border-radius: 0; border: 2px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px #808080; font-weight: normal;
+  }
+  body.retro .btn:active, body.retro .seg button.on, body.retro .acts button.on, body.retro .play.on {
+    border-color: #404040 #fff #fff #404040; box-shadow: inset 1px 1px #808080; background: #dcdcdc;
+  }
+  body.retro .btn.primary { font-weight: bold; outline: 1px dotted #000; outline-offset: -5px; }
+  body.retro .seg, body.retro .acts { background: transparent; border: 0; padding: 0; gap: 3px; }
+  body.retro .acts button.on.k { background: #0000a8; color: #fff; }
+  body.retro .acts button.on.v { background: #8b4513; color: #fff; }
+  body.retro .acts button.on.c { background: #808080; color: #fff; }
+  body.retro input, body.retro select, body.retro textarea { background: #fff; color: #000; border-radius: 0; border: 2px solid; border-color: #808080 #fff #fff #808080; }
+  body.retro .bar { background: #fff; border-radius: 0; height: 18px; border: 2px solid; border-color: #808080 #fff #fff #808080; padding: 2px; }
+  body.retro .bar > div { background: repeating-linear-gradient(90deg, #000080 0 10px, transparent 10px 12px); }
+  body.retro .log { background: #000; color: #c0c0c0; border-radius: 0; font-family: "Courier New", monospace; }
+  body.retro .log::before { content: "C:\\SCRIPTCUTTER> analyse\A"; white-space: pre; color: #fff; }
+  body.retro .stat { background: #fff; border-radius: 0; border: 2px solid; border-color: #808080 #fff #fff #808080; }
+  body.retro .r { background: #fff; border-radius: 0; border: 1px solid #808080; border-left-width: 4px; }
+  body.retro .r.keep { border-left-color: #0000a8; }
+  body.retro .r.review { background: #ffffcc; border-left-color: #8b4513; }
+  body.retro .r.sel { outline: 1px dotted #000; outline-offset: -3px; }
+  body.retro .r .why .meter { background: #c0c0c0; border-radius: 0; }
+  body.retro .r .why a, body.retro .learned b { color: #0000ee; text-decoration: underline; }
+  body.retro footer { background: #c0c0c0; }
+  body.retro .toast { background: #ffffe1; color: #000; border: 1px solid #000; border-radius: 0; }
+  body.retro #previewBox { border-radius: 0; border: 2px solid; border-color: #808080 #fff #fff #808080; }
+  body.retro kbd { color: #000; border-color: #808080; border-radius: 0; }
+  body.retro .empty b { color: #000; }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><h1>ScriptCutter v2</h1><span>retake-aware cutting for DaVinci Resolve</span></div>
-  <div class="pill" id="pill"><span class="dot" id="dot"></span><span id="pillText">Checking DaVinci Resolve…</span></div>
+  <div style="display:flex;align-items:center">
+    <div class="pill" id="pill"><span class="dot" id="dot"></span><span id="pillText">Checking DaVinci Resolve…</span></div>
+    <button class="btn themebtn" id="themeBtn" title="Switch look">Retro 95</button>
+  </div>
 </header>
 
 <main>
@@ -223,6 +278,14 @@
             <button data-v="cautious">Cautious</button><button data-v="balanced">Balanced</button><button data-v="aggressive">Aggressive</button>
           </div>
         </div>
+        <div class="toolbar">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn tbtn" data-bulk="keep">All brown → Keep</button>
+            <button class="btn tbtn" data-bulk="remove">All brown → Cut</button>
+          </div>
+          <div class="seg" id="prevSeg"><button data-v="video" class="on">▶ Video</button><button data-v="audio">▶ Audio only</button></div>
+        </div>
+        <div id="previewBox" hidden><video id="vid" playsinline preload="metadata"></video></div>
         <div id="files"></div>
       </div>
     </div>
@@ -400,7 +463,13 @@ function render() {
     <div class="stat"><b>${st.removed_takes}</b><span>takes & noises cut</span></div>
     <div class="stat"><b style="color:var(--brown)">${st.review_clips}</b><span>brown clips to check (${fmtMin(st.review_seconds)})</span></div>
     <div class="stat"><b>${st.clips}</b><span>clips on the new timeline</span></div>`;
-  $("footSum").innerHTML = `<b>${fmtMin(st.kept_seconds)}</b> final · <b>${fmtMin(removedSec)}</b> removed · <b style="color:var(--brown)">${st.review_clips}</b> to review`;
+  const L = (R.learned || []).filter((x) => x.kept + x.cut > 0);
+  if (L.length) {
+    const p = document.createElement("div"); p.className = "learned";
+    p.innerHTML = "Learned from your past choices: " + L.map((x) => `<b>${esc(x.label)}</b> ${x.shift > 0 ? "cut more" : x.shift < 0 ? "flag less" : "learning"} (${x.cut} cut / ${x.kept} kept)`).join(" · ");
+    $("stats").appendChild(p);
+  }
+  $("footSum").innerHTML =`<b>${fmtMin(st.kept_seconds)}</b> final · <b>${fmtMin(removedSec)}</b> removed · <b style="color:var(--brown)">${st.review_clips}</b> to review`;
   const holder = $("files"); holder.innerHTML = "";
   R.files.forEach((f) => {
     const h = document.createElement("div"); h.className = "file-h";
@@ -439,9 +508,21 @@ async function setAction(path, id, action) {
 }
 function play(path, id) {
   const d = findDec(path, id); if (!d) return;
-  const a = $("audio");
-  a.src = `/api/audio?job=${state.job}&path=${encodeURIComponent(path)}&start=${Math.max(0, d.start - 0.15)}&end=${d.end + 0.2}`;
-  a.play().catch(() => {});
+  const f = state.review.files.find((x) => x.path === path);
+  const t0 = Math.max(0, d.start - 0.15), t1 = d.end + 0.2;
+  const v = $("vid"), a = $("audio");
+  v.pause(); a.pause();
+  if (state.preview === "video" && f && f.has_video) {
+    const src = `/api/video?job=${state.job}&path=${encodeURIComponent(path)}`;
+    if (v.dataset.src !== src) { v.src = src; v.dataset.src = src; }
+    $("previewBox").hidden = false;
+    v.dataset.stop = t1;
+    const go = () => { v.currentTime = t0; v.play().catch(() => {}); };
+    if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
+  } else {
+    a.src = `/api/audio?job=${state.job}&path=${encodeURIComponent(path)}&start=${t0}&end=${t1}`;
+    a.play().catch(() => {});
+  }
   document.querySelectorAll(".play.on").forEach((x) => x.classList.remove("on"));
   const btn = document.querySelector(`.r[data-id="${id}"] .play`); if (btn) btn.classList.add("on");
 }
@@ -483,6 +564,32 @@ $("buildBtn").addEventListener("click", async () => {
 $("exportBtn").addEventListener("click", async () => {
   try { const r = await api(`/api/job/${state.job}/export`, {}); toast(`Saved ${r.edl} and ${r.report}`); }
   catch (e) { toast("Export failed: " + e.message, true); }
+});
+
+// ---------- preview, bulk, theme ----------
+state.preview = store.get("preview", "video");
+segSet("prevSeg", state.preview);
+segInit("prevSeg", "preview", (v) => { store.set("preview", v); if (v === "audio") { $("vid").pause(); $("previewBox").hidden = true; } });
+$("vid").addEventListener("timeupdate", () => { const v = $("vid"); if (v.dataset.stop && v.currentTime >= +v.dataset.stop) v.pause(); });
+$("vid").addEventListener("error", () => {
+  if (!$("vid").dataset.src) return;
+  state.preview = "audio"; segSet("prevSeg", "audio"); $("previewBox").hidden = true;
+  toast("This video format can't play in the browser - switched to audio preview.", true);
+});
+document.querySelectorAll("[data-bulk]").forEach((b) => b.addEventListener("click", async () => {
+  if (!state.job) return;
+  try { state.review = await api(`/api/job/${state.job}/bulk`, { from: "review", action: b.dataset.bulk }); render(); }
+  catch (e) { toast("Could not update: " + e.message, true); }
+}));
+function applyTheme(t) {
+  document.body.classList.toggle("retro", t === "retro");
+  $("themeBtn").textContent = t === "retro" ? "Modern" : "Retro 95";
+  document.title = t === "retro" ? "SCRIPTCUTTER.EXE" : "ScriptCutter v2";
+}
+applyTheme(store.get("theme", "modern"));
+$("themeBtn").addEventListener("click", () => {
+  const t = document.body.classList.contains("retro") ? "modern" : "retro";
+  store.set("theme", t); applyTheme(t);
 });
 
 load(); status(true); setInterval(() => { if (!document.hidden) status(false); }, 6000);

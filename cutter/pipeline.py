@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from . import llm, vad
+from . import learn, llm, vad
 from .analyze import analyze, apply_policy, build_phrases, find_untranscribed, POLICIES
 from .cuts import build_clips, to_frames
 from .energy import compute_envelope, detect_speech, thresholds
@@ -217,6 +217,11 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
                 d["confidence"] = max(d["confidence"], 0.85)
                 d["reason"] = "Non-speech sound (no voice detected)"
 
+    learned = learn.apply(decisions) if s.get("learn", True) else {}
+    if learned:
+        rep.log("Adjusted by your past choices: " + ", ".join(
+            f"{learn.LABELS.get(k, k)} {'+' if v > 0 else ''}{v:.2f}" for k, v in learned.items()))
+
     frozen = None
     if frozen_thread is not None:
         rep.set("video", frozen_box.get("p", 0.0))
@@ -260,6 +265,7 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
         "decisions": decisions,
         "frozen": frozen,
         "llm": llm_summary,
+        "learned": learned,
         "transcribe_seconds": tr.get("seconds"),
         "_env": env,
     }
