@@ -46,6 +46,8 @@ A Terminal window opens and:
    (Or double-click `Open ScriptCutter.command`.)
 3. Choose **Talking head** or **Screen recording** and press **Analyse**.
    A 5-minute video takes about 10–40 seconds, depending on the model.
+Click **Help** (or press `?`) in the app any time for a simple guide.
+
 4. **Review.** Click **Brown** to see only the lines it is unsure about. ▶ plays the line, and *hear the later take* plays the take it was compared with. Click **Keep** or **Cut**, or use the keys `1` keep, `2` review, `3` cut, `Space` play, `↑ ↓` move.
 5. Press **Create timeline in Resolve**. A new timeline appears; your original is never touched.
 
@@ -120,7 +122,7 @@ https://github.com/<your-user>/<your-repo>/releases/latest/download/ScriptCutter
 ### Download button for your website
 ```html
 <a href="https://github.com/<your-user>/<your-repo>/releases/latest/download/ScriptCutter-macOS.zip"
-   style="display:inline-block;padding:14px 28px;border-radius:999px;background:#ea2129;color:#000;
+   style="display:inline-block;padding:14px 28px;border-radius:999px;background:#d0402c;color:#fffaf2;
           font:600 16px/1 'Avenir Next',sans-serif;text-decoration:none">
   Download ScriptCutter for Mac
 </a>

@@ -91,8 +91,6 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 400; margin: 0; }
 }
 .card + .card { margin-top: var(--gap); }
 
-.hero { margin: -24px -24px 18px; border-radius: var(--radius-card) var(--radius-card) 0 0; overflow: hidden; }
-.hero img { display: block; width: 100%; height: auto; }
 .card-title { font-size: var(--text-xl); line-height: 1.12; }
 .card-sub { color: var(--text-muted); margin: 6px 0 4px; }
 
@@ -180,7 +178,6 @@ summary { cursor: pointer; font-family: var(--font-display); font-size: 16px; }
 
 /* ---------- review ---------- */
 .empty { text-align: center; padding: 40px 20px 30px; color: var(--text-muted); }
-.empty img { width: min(320px, 80%); margin-bottom: 18px; }
 .empty h2 { font-size: 26px; color: var(--text); margin-bottom: 6px; }
 
 .review-body { padding-left: 18px; }
@@ -203,7 +200,7 @@ kbd { font: 11px var(--font-mono); border: 1px solid var(--rule); border-radius:
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0; }
 .toolbar-group { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.preview { position: sticky; top: 10px; z-index: 2; margin-bottom: 14px; border-radius: 16px; overflow: hidden; background: #000; }
+.preview { position: sticky; top: 10px; z-index: 2; margin-bottom: 14px; border-radius: 16px; overflow: hidden; background: var(--media-bg); }
 .preview video { display: block; width: 100%; max-height: 300px; }
 
 .file-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin: 22px 0 8px; color: var(--text-muted); font-size: var(--text-sm); }
@@ -254,8 +251,8 @@ kbd { font: 11px var(--font-mono); border: 1px solid var(--rule); border-radius:
   font-size: var(--text-sm);
   color: var(--text-muted);
 }
-.choice button.is-on.keep { background: var(--keep); border-color: var(--keep); color: #fff; }
-.choice button.is-on.review { background: var(--review); border-color: var(--review); color: #fff; }
+.choice button.is-on.keep { background: var(--keep); border-color: var(--keep); color: var(--on-status); }
+.choice button.is-on.review { background: var(--review); border-color: var(--review); color: var(--on-status); }
 .choice button.is-on.remove { background: var(--inverse-bg); border-color: var(--inverse-bg); color: var(--inverse-text); }
 
 /* ---------- bottom bar (the reader toolbar) ---------- */
@@ -277,7 +274,42 @@ kbd { font: 11px var(--font-mono); border: 1px solid var(--rule); border-radius:
 .dock-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .dock input { width: 240px; background: transparent; border: 1px solid var(--inverse-text); color: var(--inverse-text); border-radius: var(--radius-control); }
 .dock .button { border-color: var(--inverse-text); color: var(--inverse-text); }
-.dock .button-accent { color: var(--ink); border-color: var(--accent); }
+.dock .button-accent { color: var(--on-accent); border-color: var(--accent); }
 .toast { margin: 10px 8px 2px; font-size: var(--text-sm); }
-.toast.is-bad { color: #ff8f8f; }
+.toast.is-bad { color: var(--danger-soft); }
 @media (max-width: 760px) { .dock { border-radius: 20px; } .dock input { width: 100%; } }
+
+/* ---------- help ---------- */
+.help {
+  width: min(760px, calc(100% - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-card);
+}
+/* ::backdrop does not inherit custom properties in every browser, so the overlay colour is repeated here */
+.help::backdrop { background: rgba(36, 34, 31, 0.45); }
+.help-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 26px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.help-head h2 { font-size: 26px; }
+.help-body { padding: 6px 26px 26px; }
+.help-body h3 { font-size: 20px; margin: 22px 0 8px; }
+.help-body h3::before { content: "● "; color: var(--accent); font-size: 12px; vertical-align: 3px; }
+.help-body p, .help-body li { color: var(--text-muted); }
+.help-body ol, .help-body ul { padding-left: 22px; margin: 6px 0; }
+.help-body li { margin: 5px 0; }
+.help-body b { color: var(--text); }
+.help-colours { display: grid; gap: 8px; margin: 8px 0; }
+.help-colours div { display: flex; gap: 10px; align-items: baseline; }
+.link-button { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; }

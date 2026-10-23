@@ -1,36 +1,41 @@
 /*
  * ScriptCutter design tokens.
  * Every colour, font and shape used by the app lives here - change the look
- * by editing this file only. Palette: ink #000000, paper #f2eee3, sun #ea2129.
+ * by editing this file only. Mood: warm paper, soft charcoal ink, vermilion.
+ * There is deliberately no pure black anywhere.
  */
 
 :root {
   /* brand palette */
-  --ink: #000000;
-  --paper: #f2eee3;
-  --sun: #ea2129;
+  --charcoal: #24221f;   /* ink: warm, never pure black */
+  --cream: #f4efe4;      /* paper */
+  --vermilion: #d0402c;  /* the one loud colour */
 
-  /* derived surfaces */
-  --bg: var(--paper);
-  --surface: #f7f4ec;
-  --surface-sunken: #e7e2d4;
-  --text: var(--ink);
-  --text-muted: #5f5a4f;
-  --text-faint: #8d877a;
-  --rule: rgba(0, 0, 0, 0.14);
-  --rule-strong: var(--ink);
-  --accent: var(--sun);
-  --on-accent: var(--ink);
-  --inverse-bg: var(--ink);
-  --inverse-text: var(--paper);
+  /* surfaces and text */
+  --bg: var(--cream);
+  --surface: #faf7f0;
+  --surface-sunken: #ebe5d8;
+  --text: var(--charcoal);
+  --text-muted: #625d54;
+  --text-faint: #908a7e;
+  --rule: rgba(36, 34, 31, 0.14);
+  --rule-strong: var(--charcoal);
+  --accent: var(--vermilion);
+  --on-accent: #fffaf2;
+  --inverse-bg: var(--charcoal);
+  --inverse-text: var(--cream);
+  --media-bg: #1a1917;
+  --overlay: rgba(36, 34, 31, 0.45);
 
   /* meaning - these match the clip colours on the Resolve timeline */
-  --keep: #2f5ed6;          /* Resolve "Blue": kept, sure */
-  --review: #94582b;        /* Resolve "Brown": kept, needs a look */
-  --review-wash: rgba(148, 88, 43, 0.10);
-  --cut: #9b968a;           /* removed */
-  --danger: #c01622;
-  --success: #1f7a4d;
+  --keep: #3563c9;        /* Resolve "Blue": kept, sure */
+  --review: #96602f;      /* Resolve "Brown": kept, needs a look */
+  --review-wash: rgba(150, 96, 47, 0.10);
+  --cut: #a39d90;         /* removed */
+  --on-status: #fffaf2;   /* text on blue / brown buttons */
+  --danger: #b8322a;
+  --danger-soft: #f3a59c;
+  --success: #3b7d55;
 
   /* type */
   --font-display: "Iowan Old Style", "Hoefler Text", "Palatino Linotype", Palatino, Georgia, serif;
@@ -46,31 +51,28 @@
   --radius-card: 24px;
   --radius-control: 999px;
   --radius-small: 10px;
-  --shadow-card: 0 22px 48px -30px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 22px 48px -30px rgba(36, 34, 31, 0.55);
   --gap: 20px;
-
-  /* print-style patterns from the poster artwork */
-  --pattern-dots: radial-gradient(var(--ink) 0.9px, transparent 1.3px) 0 0 / 6px 6px;
-  --pattern-stripes: repeating-linear-gradient(-35deg, var(--ink) 0 1.5px, transparent 1.5px 6px);
 }
 
-/* night mode - the dark reading screen */
+/* night mode */
 :root[data-theme="dark"] {
-  --bg: #0b0b0b;
-  --surface: #151515;
-  --surface-sunken: #1f1f1f;
-  --text: var(--paper);
-  --text-muted: #b9b3a5;
-  --text-faint: #7e786c;
-  --rule: rgba(242, 238, 227, 0.16);
-  --rule-strong: var(--paper);
-  --inverse-bg: var(--paper);
-  --inverse-text: var(--ink);
-  --keep: #6f95f2;
-  --review: #c98a55;
-  --review-wash: rgba(201, 138, 85, 0.14);
-  --cut: #6c675d;
-  --shadow-card: 0 22px 48px -30px rgba(0, 0, 0, 0.9);
-  --pattern-dots: radial-gradient(var(--paper) 0.9px, transparent 1.3px) 0 0 / 6px 6px;
-  --pattern-stripes: repeating-linear-gradient(-35deg, var(--paper) 0 1.5px, transparent 1.5px 6px);
+  --bg: #1b1a18;
+  --surface: #242220;
+  --surface-sunken: #2e2b28;
+  --text: #ece6d9;
+  --text-muted: #b8b1a3;
+  --text-faint: #858074;
+  --rule: rgba(236, 230, 217, 0.15);
+  --rule-strong: #ece6d9;
+  --inverse-bg: #ece6d9;
+  --inverse-text: #24221f;
+  --media-bg: #121110;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --keep: #7b9cf0;
+  --review: #cf9460;
+  --review-wash: rgba(207, 148, 96, 0.13);
+  --cut: #6f6a60;
+  --on-status: #1b1a18;
+  --shadow-card: 0 22px 48px -30px rgba(0, 0, 0, 0.8);
 }

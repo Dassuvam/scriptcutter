@@ -93,6 +93,16 @@ $("themeToggle").addEventListener("click", () => {
   applyTheme(next);
 });
 
+// ---------------------------------------------------------------- help
+const openHelp = () => { if (!$("help").open) $("help").showModal(); };
+$("helpOpen").addEventListener("click", openHelp);
+$("helpClose").addEventListener("click", () => $("help").close());
+$("help").addEventListener("click", (e) => { if (e.target === $("help")) $("help").close(); });
+document.querySelectorAll("[data-help]").forEach((b) => b.addEventListener("click", openHelp));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "?" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) openHelp();
+});
+
 // ---------------------------------------------------------------- settings
 function saveSettings() {
   const saved = { source: state.source, footage: state.footage, policy: state.policy, provider: $("provider").value };
@@ -353,7 +363,7 @@ function select(row) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (!state.review || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  if (!state.review || $("help").open || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
   const rows = [...document.querySelectorAll(".row")];
   if (!rows.length) return;
   let i = rows.findIndex((r) => r.dataset.id === state.selected);

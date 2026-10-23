@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0
+- Calmer palette inspired by the editorial reference: warm charcoal (no pure black), cream and vermilion.
+- Removed the scenery artwork for a cleaner interface.
+- New Help panel (top-right **Help** button or the `?` key) with simple steps for creators.
+
 ## 2.1.0
 - New look: ink, paper and sun-red editorial theme with a night mode. All colours and fonts live in `web/static/css/theme.css`.
 - Web app split into `index.html`, `css/theme.css`, `css/app.css`, `js/app.js`.

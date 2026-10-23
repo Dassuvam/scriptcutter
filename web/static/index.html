@@ -13,6 +13,7 @@
     <div class="wordmark"><b>ScriptCutter</b><span>retake-aware cutting for DaVinci Resolve</span></div>
     <div class="topbar-right">
       <div class="status"><span class="status-dot" id="statusDot"></span><span id="statusText">Looking for DaVinci Resolve…</span></div>
+      <button class="button button-small" id="helpOpen" title="How to use ScriptCutter (?)">Help</button>
       <button class="icon-button" id="themeToggle" title="Day / night">☾</button>
     </div>
   </header>
@@ -21,7 +22,6 @@
     <section>
       <!-- setup -->
       <div class="card">
-        <div class="hero"><img src="/static/img/hero.svg" alt=""></div>
         <h1 class="card-title">Cut the retakes,<br>keep the story.</h1>
         <p class="card-sub">Blue is sure. Brown means "please look". Nothing uncertain is cut.</p>
 
@@ -145,9 +145,9 @@
     <section class="card">
       <span class="spine">review</span>
       <div class="empty" id="emptyState">
-        <img src="/static/img/hero.svg" alt="">
         <h2>Nothing analysed yet</h2>
         <p>Pick a source and press Analyse. You will check every decision here before anything reaches Resolve.</p>
+        <p>First time? <button class="link-button" data-help>Read the 2-minute guide</button></p>
       </div>
 
       <div class="review-body" id="reviewBody" hidden>
@@ -193,6 +193,68 @@
     </div>
     <div class="toast" id="toast" hidden></div>
   </footer>
+
+  <dialog class="help" id="help" aria-labelledby="helpTitle">
+    <div class="help-head">
+      <h2 id="helpTitle">How to use ScriptCutter</h2>
+      <button class="icon-button" id="helpClose" title="Close (Esc)">✕</button>
+    </div>
+    <div class="help-body">
+      <p>ScriptCutter watches your raw video, finds the parts where you said a line again, and removes the old tries and the long pauses. You always get a new timeline. Your original video is never changed.</p>
+
+      <h3>Before your first video (only once)</h3>
+      <ol>
+        <li>Open DaVinci Resolve.</li>
+        <li>Go to <b>DaVinci Resolve → Settings → System → General</b>.</li>
+        <li>Set <b>External scripting using</b> to <b>Local</b>, click <b>Save</b>, and restart Resolve.</li>
+      </ol>
+
+      <h3>Cut a video in 6 steps</h3>
+      <ol>
+        <li>In Resolve, put your raw recording on <b>video track 1</b> of a timeline.</li>
+        <li>Open <b>Workspace → Scripts → ScriptCutterV2</b>. This page opens.</li>
+        <li>Choose <b>Talking head</b> (you talking to the camera) or <b>Screen recording</b> (a tutorial on your screen).</li>
+        <li>Press <b>Analyse</b> and wait. A 5-minute video takes less than a minute.</li>
+        <li>Check the list. Click <b>Brown</b> at the top to see only the parts that need your eyes. Press ▶ to listen, then click <b>Keep</b> or <b>Cut</b>.</li>
+        <li>Press <b>Create timeline in Resolve</b>. Your new, cleaned timeline opens in Resolve.</li>
+      </ol>
+
+      <h3>What the colours mean</h3>
+      <div class="help-colours">
+        <div><span class="swatch keep"></span><span><b>Blue</b>: kept. ScriptCutter is sure this is a good take.</span></div>
+        <div><span class="swatch review"></span><span><b>Brown</b>: kept, but please check it. It might be a mistake or a repeat.</span></div>
+        <div><span class="swatch cut"></span><span><b>Grey, crossed out</b>: removed. Usually an older try of a line you said again.</span></div>
+      </div>
+      <p>In Resolve, brown clips have a marker with the reason. Press <b>Shift + ↓</b> to jump to the next one.</p>
+
+      <h3>Record so it works best</h3>
+      <ul>
+        <li>When you make a mistake, <b>pause for a second</b> and then say the <b>whole sentence again</b> from the start.</li>
+        <li>Your <b>last try</b> is the one that is kept, so make the last one your best one.</li>
+        <li>Saying "let me do that again" or "cut" before a retake helps it find the mistake.</li>
+        <li>Record in a quiet room. Background music makes speech harder to understand.</li>
+      </ul>
+
+      <h3>Useful buttons</h3>
+      <ul>
+        <li><b>Cautious / Balanced / Aggressive</b>: how sure it must be before cutting. Not happy? Switch it. The list updates at once.</li>
+        <li><b>All brown → Keep / Cut</b>: decide all brown parts with one click.</li>
+        <li><b>Pace &amp; padding</b>: give your words more or less breathing room.</li>
+        <li>Keyboard: <b>↑ ↓</b> move, <b>Space</b> play, <b>1</b> keep, <b>2</b> check later, <b>3</b> cut, <b>?</b> opens this help.</li>
+      </ul>
+
+      <h3>It gets smarter with you</h3>
+      <p>When you change Keep or Cut and then create the timeline, ScriptCutter remembers your choice. After a few videos it cuts the way you like.</p>
+
+      <h3>Something is not working?</h3>
+      <ul>
+        <li><b>"Resolve not reachable"</b>: open a project in Resolve and check the setting from the first section.</li>
+        <li><b>ScriptCutterV2 is missing from the menu</b>: run <b>Install ScriptCutter.command</b> again and restart Resolve.</li>
+        <li><b>The video does not play here</b>: click <b>▶ Audio only</b>.</li>
+        <li><b>Too many brown parts</b>: choose <b>Aggressive</b>, or install a bigger speech model by running the installer again.</li>
+      </ul>
+    </div>
+  </dialog>
 
   <audio id="audio" preload="none"></audio>
   <script src="/static/js/app.js"></script>
