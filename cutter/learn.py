@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import os
 
-PATH = os.path.expanduser("~/Library/Application Support/ScriptCutterV2/feedback.json")
+from . import paths
+
+PATH = None  # tests point this elsewhere; default is <app data>/feedback.json
 MIN_EXAMPLES = 4
 MAX_SHIFT = 0.2
 
@@ -37,20 +39,23 @@ def category(reason: str) -> str:
     return ""
 
 
+def _path() -> str:
+    return PATH or os.path.join(paths.data_dir(), "feedback.json")
+
+
 def load() -> dict:
     try:
-        with open(PATH, "r", encoding="utf-8") as f:
+        with open(_path(), "r", encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
 
 
 def save(data: dict):
-    os.makedirs(os.path.dirname(PATH), exist_ok=True)
-    tmp = PATH + ".tmp"
+    tmp = _path() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
-    os.replace(tmp, PATH)
+    os.replace(tmp, _path())
 
 
 def shifts(data: dict = None) -> dict:

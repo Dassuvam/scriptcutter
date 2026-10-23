@@ -163,14 +163,20 @@ $("filePath").addEventListener("drop", (e) => {
 async function refreshStatus(first) {
   try {
     const s = await api("/api/status");
-    $("statusDot").classList.toggle("is-on", !!s.project);
-    $("statusText").textContent = !s.connected
-      ? "Resolve not reachable (file mode still works)"
-      : s.project ? `${s.project} · ${s.timeline || "no timeline"}` : "Resolve open, no project";
+    $("statusDot").classList.toggle("is-on", s.mode === "live" || s.mode === "menu");
+    $("statusText").textContent = statusLine(s);
+    $("statusText").title = s.mode === "menu"
+      ? "Free version of Resolve: re-open ScriptCutter from Workspace > Scripts after switching timelines." : "";
     if (first) fillChoices(s);
   } catch (e) {
     $("statusText").textContent = "Local server not responding";
   }
+}
+
+function statusLine(s) {
+  if (s.mode === "live") return s.project ? `${s.project} · ${s.timeline || "no timeline open"}` : (s.message || "Resolve is open, no project");
+  if (s.mode === "menu") return `${s.timeline} · opened from the Resolve menu`;
+  return "Resolve not connected (video files still work)";
 }
 
 function fillChoices(s) {
@@ -426,6 +432,29 @@ onSwitch("previewSwitch", (v) => {
 });
 
 // ---------------------------------------------------------------- output
+function buildMessage(r) {
+  if (!r.ok) return [`Resolve did not create the timeline: ${r.error || "unknown error"}`, true];
+  let msg = `Created "${r.timeline}": ${r.items} clips, ${r.review_markers} review markers.`;
+  if (r.missing_media) msg += ` ${r.missing_media} clips were skipped because their media is offline.`;
+  if (r.voice_isolation === false) msg += " Voice Isolation needs DaVinci Resolve Studio.";
+  if (r.learned_from) msg += ` Learned from ${r.learned_from} of your choices.`;
+  return [msg, false];
+}
+
+// free version of Resolve: wait until the user runs the Build menu entry inside Resolve
+async function waitForMenuBuild(started) {
+  try {
+    const r = await api(`/api/job/${state.job}/build`);
+    if (r.pending) {
+      if (Date.now() - started < 30 * 60 * 1000) return setTimeout(() => waitForMenuBuild(started), 1500);
+      toast("Still waiting for Resolve. Press Create timeline again when you are ready.", true);
+    } else {
+      toast(...buildMessage(r));
+    }
+  } catch (e) { toast("Lost contact with ScriptCutter: " + e.message, true); }
+  $("buildButton").disabled = false;
+}
+
 $("buildButton").addEventListener("click", async () => {
   if (!state.job) return;
   $("buildButton").disabled = true;
@@ -435,11 +464,11 @@ $("buildButton").addEventListener("click", async () => {
       name: $("timelineName").value, checkerboard: $("checkerboard").checked, overlap_frames: +$("overlap").value || 3,
       voice_isolation: $("voiceIsolation").checked, markers: $("markers").checked,
     });
-    let msg = `Created "${r.timeline}": ${r.items} clips, ${r.review_markers} review markers.`;
-    if (r.position_mismatches) msg += ` ${r.position_mismatches} clips could not be verified.`;
-    if (r.voice_isolation === false) msg += " Voice Isolation needs Resolve Studio.";
-    if (r.learned_from) msg += ` Learned from ${r.learned_from} of your choices.`;
-    toast(msg);
+    if (r.pending) {
+      toast("Almost done: in DaVinci Resolve choose Workspace → Scripts → ScriptCutter - Build Timeline.");
+      return waitForMenuBuild(Date.now());
+    }
+    toast(...buildMessage(r));
   } catch (e) {
     toast("Could not create the timeline: " + e.message, true);
   }

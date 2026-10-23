@@ -33,7 +33,7 @@
         <div id="sourceResolve">
           <label class="field-label" for="track">Video track to read</label>
           <input type="number" id="track" min="1" value="1">
-          <div class="hint">Your timeline is never changed. A new one is created.</div>
+          <div class="hint">Your timeline is never changed; a new one is created. Free version of Resolve: open ScriptCutter from Resolve's Workspace → Scripts menu so it can see your timeline.</div>
         </div>
         <div id="sourceFile" hidden>
           <label class="field-label" for="filePath">Path to the raw recording</label>
@@ -206,18 +206,28 @@
       <ol>
         <li>Open DaVinci Resolve.</li>
         <li>Go to <b>DaVinci Resolve → Settings → System → General</b>.</li>
-        <li>Set <b>External scripting using</b> to <b>Local</b>, click <b>Save</b>, and restart Resolve.</li>
+        <li>Set <b>External scripting using</b> to <b>Local</b>, click <b>Save</b>, and restart Resolve. (Studio only. The free version doesn't need this.)</li>
       </ol>
 
       <h3>Cut a video in 6 steps</h3>
       <ol>
         <li>In Resolve, put your raw recording on <b>video track 1</b> of a timeline.</li>
-        <li>Open <b>Workspace → Scripts → ScriptCutterV2</b>. This page opens.</li>
+        <li>Open <b>Workspace → Scripts → ScriptCutter</b>. This page opens.</li>
         <li>Choose <b>Talking head</b> (you talking to the camera) or <b>Screen recording</b> (a tutorial on your screen).</li>
         <li>Press <b>Analyse</b> and wait. A 5-minute video takes less than a minute.</li>
         <li>Check the list. Click <b>Brown</b> at the top to see only the parts that need your eyes. Press ▶ to listen, then click <b>Keep</b> or <b>Cut</b>.</li>
         <li>Press <b>Create timeline in Resolve</b>. Your new, cleaned timeline opens in Resolve.</li>
       </ol>
+
+      <h3>Free or Studio version of Resolve?</h3>
+      <ul>
+        <li><b>Studio</b>: everything above happens by itself.</li>
+        <li><b>Free</b>: the free version only allows scripts started from its own menu, so there are two small extra clicks.
+          Always open this page from <b>Workspace → Scripts → ScriptCutter</b> (do it again after you switch to another timeline).
+          After you press <b>Create timeline in Resolve</b>, go back to Resolve and choose
+          <b>Workspace → Scripts → ScriptCutter - Build Timeline</b>.</li>
+        <li><b>AI Voice Isolation</b> only works in Studio. Everything else works in both.</li>
+      </ul>
 
       <h3>What the colours mean</h3>
       <div class="help-colours">
@@ -249,7 +259,8 @@
       <h3>Something is not working?</h3>
       <ul>
         <li><b>"Resolve not reachable"</b>: open a project in Resolve and check the setting from the first section.</li>
-        <li><b>ScriptCutterV2 is missing from the menu</b>: run <b>Install ScriptCutter.command</b> again and restart Resolve.</li>
+        <li><b>ScriptCutter is missing from the menu</b>: run the installer again and restart Resolve.</li>
+        <li><b>"Can't see your Resolve timeline"</b>: open this page from <b>Workspace → Scripts → ScriptCutter</b> in Resolve.</li>
         <li><b>The video does not play here</b>: click <b>▶ Audio only</b>.</li>
         <li><b>Too many brown parts</b>: choose <b>Aggressive</b>, or install a bigger speech model by running the installer again.</li>
       </ul>

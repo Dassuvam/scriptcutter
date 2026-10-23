@@ -1,25 +1,22 @@
 """
-Retake / stumble analysis with a confidence for every decision.
+Retake and stumble detection with a confidence for every decision.
 
-Unit of decision = a phrase (one Whisper segment, already snapped to real
-speech). v1 decided on silence chunks, which do not line up with sentences, and
-asked an LLM for a "keep list" - anything the model forgot was deleted.
-
-Here every phrase starts as KEEP and only loses that status with evidence:
-  * the same words are said again shortly after (a retake)  -> keep the LAST take
-  * the phrase belongs to a block that was re-recorded       -> block evidence
+Every phrase (one Whisper segment, snapped to real speech) starts as KEEP and
+only loses that status with evidence:
+  * the same words are said again shortly after (a retake): the LAST take wins
+  * the phrase belongs to a block that was re-recorded
   * explicit restart cues ("let me do that again", "phir se")
   * filler-only phrases, tiny isolated noises, unexplained audio
   * a repeated line inside one phrase ("so today, so today we...")
 
-Each decision carries `confidence` = how sure we are it should be REMOVED.
-`apply_policy` turns that into: remove (sure) | review (kept, brown) | keep (blue).
+`confidence` is how sure we are that an item should be REMOVED;
+apply_policy() turns it into remove | review (kept, brown) | keep (blue).
 """
 from __future__ import annotations
 
 from .energy import speech_overlap
-from .text import (tokens, content_tokens, is_filler_only, restart_cue, match_stats,
-                   find_internal_restart, FILLERS)
+from .text import (FILLERS, STOPWORDS, content_tokens, find_internal_restart, is_filler_only, match_stats,
+                   restart_cue, tokens)
 
 WINDOW_SEC = 120.0     # how far ahead to look for a redo
 MAX_AHEAD = 18         # phrases
@@ -292,17 +289,35 @@ def analyze(phrases: list, untranscribed: list = None, translate_mode: bool = Fa
         if dec[k]["confidence"] >= 0.6 or "loop" in p["flags"]:
             continue
         words = p["words"]
-        word_toks = [tokens(w["w"]) for w in words]
-        if words and all(len(t) == 1 for t in word_toks):
-            hit = find_internal_restart([t[0] for t in word_toks])
+        flat, owner = [], []  # tokens of the phrase and the word each one belongs to
+        for w_i, w in enumerate(words):
+            for t in tokens(w["w"]):
+                flat.append(t)
+                owner.append(w_i)
+        if words:
+            hit = find_internal_restart(flat)
             if hit:
-                i, j = hit
+                i, j = owner[hit[0]], owner[hit[1]]
                 pause = words[j]["start"] - words[j - 1]["end"]
                 extra.append({"id": p["id"] + "r", "start": words[i]["start"], "end": words[j]["start"],
                               "kind": "restart", "parent": p["id"],
                               "text": " ".join(w["w"] for w in words[i:j]),
                               "confidence": 0.8 if pause >= 0.15 else 0.6, "ref": None,
                               "reason": "Started this line, stopped and said it again"})
+            # the phrase ends with the start of the next phrase: "... today I am going to show you how to"
+            # followed by "today I am going to show you how to edit videos" -> cut that tail
+            nxt = phrases[k + 1]["toks"] if k + 1 < n else []
+            if nxt and dec[k + 1]["confidence"] < 0.6 and phrases[k + 1]["start"] - p["end"] < 3.0:
+                for size in range(min(len(flat) - 1, len(nxt) - 1, 14), 3, -1):
+                    tail = flat[-size:]
+                    if tail == nxt[:size] and any(t not in STOPWORDS for t in tail):
+                        w_i = owner[len(flat) - size]
+                        extra.append({"id": p["id"] + "t", "start": words[w_i]["start"], "end": p["end"],
+                                      "kind": "restart", "parent": p["id"],
+                                      "text": " ".join(w["w"] for w in words[w_i:]), "confidence": 0.82,
+                                      "ref": phrases[k + 1]["id"],
+                                      "reason": "Started the next line here, stopped and said it again"})
+                        break
         elif find_internal_restart(p["toks"], min_len=4):
             set_dec(k, 0.5, "This phrase contains a repeated line - trim the first attempt")
         for w_i, w in enumerate(words):

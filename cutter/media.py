@@ -1,58 +1,34 @@
-"""
-ffmpeg / ffprobe helpers and the on-disk analysis cache.
-
-The cache key is (absolute path, size, mtime), so re-running the analysis with
-different settings on the same footage skips audio extraction and Whisper.
-"""
+"""ffmpeg / ffprobe helpers and the per-file analysis cache."""
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 from fractions import Fraction
 
-CACHE_ROOT = os.path.expanduser("~/Library/Caches/ScriptCutterV2")
+from . import paths
 
-_BIN_DIRS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-
-
-def find_bin(name: str) -> str:
-    p = shutil.which(name)
-    if p:
-        return p
-    for d in _BIN_DIRS:
-        c = os.path.join(d, name)
-        if os.path.isfile(c) and os.access(c, os.X_OK):
-            return c
-    return ""
+INSTALL_HINT = "Run the ScriptCutter installer again."
 
 
-def require_bin(name: str, hint: str) -> str:
-    p = find_bin(name)
+def require_program(name: str) -> str:
+    p = paths.find_program(name)
     if not p:
-        raise RuntimeError(f"'{name}' was not found. {hint}")
+        raise RuntimeError(f"'{name}' was not found. {INSTALL_HINT}")
     return p
 
 
-def file_signature(path: str) -> str:
-    st = os.stat(path)
-    raw = f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
-
-
 def cache_dir_for(path: str) -> str:
-    d = os.path.join(CACHE_ROOT, file_signature(path))
+    """One cache folder per source file, keyed by path, size and modification time."""
+    st = os.stat(path)
+    key = hashlib.sha1(f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}".encode("utf-8")).hexdigest()[:16]
+    d = os.path.join(paths.cache_dir(), key)
     os.makedirs(d, exist_ok=True)
-    meta = os.path.join(d, "source.txt")
-    if not os.path.isfile(meta):
-        with open(meta, "w", encoding="utf-8") as f:
-            f.write(os.path.abspath(path))
     return d
 
 
-def _parse_rate(s: str) -> float:
+def _rate(s: str) -> float:
     try:
         fr = Fraction(s)
         return float(fr) if fr > 0 else 0.0
@@ -61,73 +37,65 @@ def _parse_rate(s: str) -> float:
 
 
 def probe(path: str) -> dict:
-    ffprobe = require_bin("ffprobe", "Install it with: brew install ffmpeg")
     res = subprocess.run(
-        [ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace",
-    )
+        [require_program("ffprobe"), "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     if res.returncode != 0:
-        raise RuntimeError(f"ffprobe could not read '{os.path.basename(path)}': {res.stderr.strip()[:300]}")
+        raise RuntimeError(f"Could not read '{os.path.basename(path)}': {res.stderr.strip()[:300]}")
     data = json.loads(res.stdout or "{}")
     streams = data.get("streams", [])
     fmt = data.get("format", {})
     video = next((s for s in streams if s.get("codec_type") == "video"
                   and not s.get("disposition", {}).get("attached_pic")), None)
     audios = [s for s in streams if s.get("codec_type") == "audio"]
-    tc = (fmt.get("tags", {}) or {}).get("timecode")
+    timecode = (fmt.get("tags") or {}).get("timecode")
     for s in streams:
-        tc = tc or (s.get("tags", {}) or {}).get("timecode")
-    fps = 0.0
-    if video:
-        fps = _parse_rate(video.get("r_frame_rate", "0")) or _parse_rate(video.get("avg_frame_rate", "0"))
+        timecode = timecode or (s.get("tags") or {}).get("timecode")
+    fps = (_rate(video.get("r_frame_rate", "0")) or _rate(video.get("avg_frame_rate", "0"))) if video else 0.0
     return {
         "path": os.path.abspath(path),
         "duration": float(fmt.get("duration") or 0.0),
         "fps": fps,
         "has_video": video is not None,
         "audio_streams": len(audios),
-        "audio_channels": int(audios[0].get("channels", 0)) if audios else 0,
-        "start_timecode": tc or "00:00:00:00",
+        "start_timecode": timecode or "00:00:00:00",
     }
 
 
 def extract_audio(path: str, out_wav: str, audio_stream: int = 0) -> str:
-    """16 kHz mono PCM, all channels of the chosen stream mixed down."""
+    """16 kHz mono 16-bit WAV of one audio stream (all its channels mixed down)."""
     if os.path.isfile(out_wav) and os.path.getsize(out_wav) > 1000:
         return out_wav
-    ffmpeg = require_bin("ffmpeg", "Install it with: brew install ffmpeg")
     tmp = out_wav + ".part.wav"
-    cmd = [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", path, "-map", f"0:a:{audio_stream}",
-           "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmp]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    res = subprocess.run(
+        [require_program("ffmpeg"), "-nostdin", "-v", "error", "-y", "-i", path, "-map", f"0:a:{audio_stream}",
+         "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", tmp],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     if res.returncode != 0 or not os.path.isfile(tmp):
         if os.path.isfile(tmp):
             os.unlink(tmp)
-        err = res.stderr.strip()
-        if "matches no streams" in err or "does not contain any stream" in err:
-            raise RuntimeError(f"'{os.path.basename(path)}' has no audio track to analyse.")
-        raise RuntimeError(f"Audio extraction failed: {err[:400]}")
+        if "matches no streams" in res.stderr:
+            raise RuntimeError(f"'{os.path.basename(path)}' has no audio track.")
+        raise RuntimeError(f"Audio extraction failed: {res.stderr.strip()[:400]}")
     os.replace(tmp, out_wav)
     return out_wav
 
 
 def detect_frozen_video(path: str, duration: float, min_freeze: float = 1.0, progress=None) -> list:
     """
-    Returns [(start, end), ...] where the picture does not change (screen
-    recordings: nothing happening on screen). Decoded at 5 fps / 320 px so a
-    one-hour 1080p recording takes about a minute on Apple Silicon.
+    [(start, end), ...] where the picture does not change. Used for screen
+    recordings to tell "silent but something happens on screen" apart from
+    dead time. Decoded at 5 fps / 320 px to stay fast.
     """
-    ffmpeg = require_bin("ffmpeg", "Install it with: brew install ffmpeg")
-    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-hwaccel", "videotoolbox", "-i", path, "-an",
+    cmd = [require_program("ffmpeg"), "-nostdin", "-hide_banner", "-hwaccel", "auto", "-i", path, "-an",
            "-vf", f"fps=5,scale=320:-2,freezedetect=n=0.002:d={min_freeze}", "-f", "null", "-"]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
     frozen, start = [], None
     for line in proc.stderr:
         if "freeze_start:" in line:
-            start = float(line.rsplit("freeze_start:", 1)[1].strip().split()[0])
+            start = float(line.rsplit("freeze_start:", 1)[1].split()[0])
         elif "freeze_end:" in line and start is not None:
-            end = float(line.rsplit("freeze_end:", 1)[1].strip().split()[0])
-            frozen.append((start, end))
+            frozen.append((start, float(line.rsplit("freeze_end:", 1)[1].split()[0])))
             start = None
         elif progress and "time=" in line and duration > 0:
             try:

@@ -1,0 +1,26 @@
+name: release
+
+# Push a tag like v3.0.0 (matching the VERSION file) to publish ScriptCutter.zip as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches VERSION
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+      - run: python tests/test_scriptcutter.py
+      - run: python tools/build_release.py
+      - name: Publish
+        run: gh release create "$GITHUB_REF_NAME" dist/ScriptCutter.zip dist/ScriptCutter.zip.sha256 --title "ScriptCutter $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md
+        env:
+          GH_TOKEN: ${{ github.token }}

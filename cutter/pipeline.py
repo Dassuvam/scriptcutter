@@ -1,9 +1,8 @@
 """
-End-to-end orchestration: source file(s) -> analysis -> clip plan.
+Source file -> analysis -> clip plan.
 
-Analysis of a file is cached on disk (audio, transcript) and in memory
-(envelope), so changing the policy, padding or your own keep/remove choices
-re-cuts instantly without running Whisper again.
+Audio, transcript, voice and screen-motion results are cached per file, so
+changing the policy, padding or your own choices re-cuts instantly.
 """
 from __future__ import annotations
 
@@ -17,8 +16,7 @@ from .analyze import analyze, apply_policy, build_phrases, find_untranscribed, P
 from .cuts import build_clips, to_frames
 from .energy import compute_envelope, detect_speech, thresholds
 from .media import cache_dir_for, detect_frozen_video, extract_audio, probe
-from .transcribe import (can_translate, clean_segments, detect_language, installed_models, pick_model,
-                         transcribe)
+from .transcribe import can_translate, clean_segments, detect_language, pick_model, transcribe
 
 DEFAULT_SETTINGS = {
     "language": "auto",         # auto | en | hi | ... (Whisper codes)
@@ -35,10 +33,8 @@ DEFAULT_SETTINGS = {
     "llm_api_key": "",
     "llm_base_url": "",
     "topic": "",
-    "checkerboard": False,
-    "overlap_frames": 3,
-    "voice_isolation": False,
-    "markers": True,
+    "use_vad": True,            # Silero voice detection when installed
+    "learn": True,              # apply what was learned from your past choices
 }
 
 
@@ -140,7 +136,7 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
     # neural voice detection: keeps typing / clicks / music away from Whisper
     voice_used = False
     nonvoice = []
-    if s.get("use_vad", True) and vad.available():
+    if s["use_vad"] and vad.available():
         vpath = os.path.join(cdir, "voice.json")
         voice = _load_json(vpath) if use_cache else None
         if voice is None:
@@ -165,12 +161,12 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
             probe_model = pick_model(s["model"], translate=True, language="xx")
         except RuntimeError:
             probe_model = pick_model(s["model"], translate=False, language="xx")
-        cached = _load_json(os.path.join(cdir, "language_v2.json")) if use_cache else None
+        cached = _load_json(os.path.join(cdir, "language.json")) if use_cache else None
         if cached:
             lang, lang_p = cached["language"], cached["p"]
         else:
             lang, lang_p = detect_language(wav, loose, probe_model)
-            _save_json(os.path.join(cdir, "language_v2.json"), {"language": lang, "p": lang_p})
+            _save_json(os.path.join(cdir, "language.json"), {"language": lang, "p": lang_p})
         rep.log(f"Detected language: {lang} (p={lang_p:.2f})")
     mode = s["text_mode"]
     translate = (lang != "en") if mode == "auto" else (mode == "english" and lang != "en")
@@ -183,7 +179,7 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
 
     # transcript (cached)
     rep.set("transcribe")
-    key = (f"rawtranscript_{os.path.basename(model)}_{lang}_{'en' if translate else 'orig'}_{sens:+.0f}"
+    key = (f"transcript_{os.path.basename(model)}_{lang}_{'en' if translate else 'orig'}_{sens:+.0f}"
            f"{'_vad' if voice_used else ''}.json")
     tpath = os.path.join(cdir, key)
     tr = _load_json(tpath) if use_cache else None
@@ -217,12 +213,11 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
                 d["confidence"] = max(d["confidence"], 0.85)
                 d["reason"] = "Non-speech sound (no voice detected)"
 
-    learned = learn.apply(decisions) if s.get("learn", True) else {}
+    learned = learn.apply(decisions) if s["learn"] else {}
     if learned:
         rep.log("Adjusted by your past choices: " + ", ".join(
             f"{learn.LABELS.get(k, k)} {'+' if v > 0 else ''}{v:.2f}" for k, v in learned.items()))
 
-    frozen = None
     if frozen_thread is not None:
         rep.set("video", frozen_box.get("p", 0.0))
         if frozen_thread.is_alive():
@@ -273,9 +268,9 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
 
 def plan_for_sources(sources: list, analyses: dict, settings: dict) -> dict:
     """
-    sources: ordered timeline items [{"path", "fps", "start_sec", "end_sec", "media_pool_item"?}]
+    sources: ordered timeline items [{"path", "fps", "start_sec", "end_sec"}]
              (for a plain file: one item covering the whole file)
-    analyses: path -> analysis
+    analyses: path -> analysis from analyze_file()
     """
     s = dict(DEFAULT_SETTINGS)
     s.update(settings or {})
@@ -292,8 +287,7 @@ def plan_for_sources(sources: list, analyses: dict, settings: dict) -> dict:
                           source_range=rng, frozen=a.get("frozen"), screen_mode=s["footage"] == "screen")
         fps = src.get("fps") or a["info"]["fps"] or 25.0
         for c in to_frames(res["clips"], fps):
-            c.update(path=src["path"], src_fps=fps, media_pool_item=src.get("media_pool_item"),
-                     source_name=os.path.basename(src["path"]))
+            c.update(path=src["path"], src_fps=fps, source_name=os.path.basename(src["path"]))
             plan.append(c)
         for r in res["removed"]:
             r["source_name"] = os.path.basename(src["path"])
@@ -302,7 +296,3 @@ def plan_for_sources(sources: list, analyses: dict, settings: dict) -> dict:
             totals[k] += res["stats"][k]
     totals = {k: round(v, 2) if isinstance(v, float) else v for k, v in totals.items()}
     return {"plan": plan, "removed": removed, "stats": totals}
-
-
-def available_models() -> list:
-    return installed_models()

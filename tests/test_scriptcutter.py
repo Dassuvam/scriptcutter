@@ -1,5 +1,5 @@
 """
-ScriptCutter v2 tests.  Run:  python3 tests/test_v2.py
+ScriptCutter tests.  Run:  python3 tests/test_scriptcutter.py
 The last test builds a synthetic recording with macOS `say` and runs the full
 pipeline (skipped automatically if `say` or whisper-cli is missing).
 """
@@ -16,7 +16,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 from cutter import analyze as an  # noqa: E402
-from cutter import cuts, export, llm, text  # noqa: E402
+from cutter import cuts, export, llm, paths, resolve_bridge, text  # noqa: E402
 from cutter.energy import Envelope  # noqa: E402
 from cutter.transcribe import _regular_loops, build_chunks, clean_segments  # noqa: E402
 
@@ -38,7 +38,6 @@ def actions(decs):
 
 class TextTests(unittest.TestCase):
     def test_devanagari_survives_normalisation(self):
-        # v1 stripped everything outside a-z, so Hindi takes became empty
         self.assertEqual(text.tokens("तो आपको क्या करना है"), ["तो", "आपको", "क्या", "करना", "है"])
 
     def test_contractions_and_numbers(self):
@@ -153,12 +152,6 @@ class CutTests(unittest.TestCase):
         for a, b in zip(fr, fr[1:]):
             self.assertLessEqual(a["src_out"], b["src_in"])
 
-    def test_checkerboard_layout(self):
-        fr = [{"src_in": 0, "src_out": 60}, {"src_in": 100, "src_out": 160}, {"src_in": 200, "src_out": 230}]
-        lay = cuts.layout(fr, 30, 24, overlap_frames=3, checkerboard=True)
-        self.assertEqual([c["track"] for c in lay], [1, 2, 1])
-        self.assertEqual(lay[0]["rec_out"] - lay[1]["rec_in"], 3)
-
 
 class TranscribeHelpers(unittest.TestCase):
     def test_regular_loop_dropped_but_real_retakes_kept(self):
@@ -214,6 +207,16 @@ class LearnTests(unittest.TestCase):
         self.assertGreaterEqual(fresh[0]["confidence"], 0.75)  # now auto-cut under Balanced
 
 
+class BridgeTests(unittest.TestCase):
+    def test_lua_literal_escapes_everything(self):
+        lua = resolve_bridge.to_lua({"name": 'He said "hi"\\n', "n": 3, "ok": True, "clips": [1.5, None]})
+        self.assertIn('["name"]="He said \\"hi\\"\\\\n"', lua)
+        self.assertIn('["clips"]={1.5,nil}', lua)
+
+    def test_unknown_program_is_empty(self):
+        self.assertEqual(paths.find_program("no-such-program-xyz"), "")
+
+
 @unittest.skipUnless(shutil.which("say") and (shutil.which("whisper-cli") or os.path.exists("/opt/homebrew/bin/whisper-cli")),
                      "needs macOS say + whisper-cli")
 class EndToEnd(unittest.TestCase):
@@ -223,12 +226,11 @@ class EndToEnd(unittest.TestCase):
         wav = os.path.join(tempfile.mkdtemp(), "synth.wav")
         truth = make_synthetic.build(wav)
         a = pipeline.analyze_file(wav, {"language": "en"}, pipeline.Reporter(), use_cache=False)
-        phr = [d for d in a["decisions"] if d["kind"] == "phrase"]
+        removed = [d for d in a["decisions"] if d["action"] == "remove"]  # whole lines and word-level cuts
         correct = 0
         for t in truth:
             mid = (t["start"] + t["end"]) / 2
-            d = next((d for d in phr if d["start"] - 0.3 <= mid <= d["end"] + 0.3), None)
-            got = "remove" if d and d["action"] == "remove" else "keep"
+            got = "remove" if any(d["start"] <= mid <= d["end"] for d in removed) else "keep"
             correct += got == t["expected"]
         self.assertGreaterEqual(correct, len(truth) - 1, f"{correct}/{len(truth)} correct")
 

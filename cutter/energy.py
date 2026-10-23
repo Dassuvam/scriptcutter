@@ -1,10 +1,8 @@
 """
-Loudness envelope + adaptive speech detection.
+Loudness envelope (10 ms frames) and adaptive speech detection.
 
-Everything here works on a 16 kHz mono 16-bit WAV and a 10 ms frame grid.
-The old version used a fixed -32 dB silencedetect threshold, which sat *above*
-the median level of real recordings and chopped soft word endings. Here the
-threshold is derived from each file's own noise floor and speech level.
+The speech threshold comes from each file's own noise floor and speech level,
+so quiet and loud recordings both work.
 """
 from __future__ import annotations
 
@@ -37,18 +35,6 @@ class Envelope:
     # -- indexing -------------------------------------------------------
     def idx(self, t: float) -> int:
         return max(0, min(len(self.db) - 1, int(round(t / self.hop))))
-
-    def level(self, start: float, end: float) -> float:
-        """Mean power (dB) between two times."""
-        a, b = self.idx(start), self.idx(end)
-        if b <= a:
-            return self.db[a] if self.db else FLOOR_DB
-        p = sum(10 ** (d / 10.0) for d in self.db[a:b]) / (b - a)
-        return 10 * math.log10(p) if p > 0 else FLOOR_DB
-
-    def peak(self, start: float, end: float) -> float:
-        a, b = self.idx(start), self.idx(end)
-        return max(self.db[a:b + 1]) if self.db else FLOOR_DB
 
     def quietest(self, start: float, end: float) -> float:
         """Time of the quietest 30 ms window inside [start, end]."""

@@ -1,8 +1,6 @@
 """
-File exports: CMX3600 EDL (manual import fallback) and a JSON report.
-
-EDL source timecodes are written in the SOURCE clip's frame rate and offset by
-its embedded start timecode - v1 used the timeline rate and assumed 00:00:00:00.
+File exports: a CMX 3600 EDL (manual import fallback) and a JSON report.
+EDL source timecodes use each clip's own frame rate and embedded start timecode.
 """
 from __future__ import annotations
 

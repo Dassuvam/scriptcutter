@@ -1,9 +1,7 @@
 """
-Language-agnostic text utilities.
-
-v1 normalised text with [^a-zA-Z0-9], which deletes every Devanagari (or any
-non-Latin) character, so Hindi takes all became empty and could never be
-compared. Everything here is Unicode-aware.
+Unicode-aware text helpers: normalisation, tokens, fillers, restart cues,
+loop detection and the similarity measures used to find retakes. Works for
+any script (Latin, Devanagari, ...).
 """
 from __future__ import annotations
 

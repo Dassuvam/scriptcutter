@@ -1,21 +1,12 @@
 """
-Optional AI second opinion (free tiers: Gemini, Groq, OpenRouter, or local Ollama).
+Optional AI second opinion: Gemini, Groq, OpenRouter, a local Ollama, or any
+OpenAI-compatible server.
 
-What went wrong in v1:
-  * One giant prompt with every take and an 18 s timeout. For anything longer
-    than a few minutes the call timed out and the tool silently fell back to
-    the weak heuristic - the launcher sent server output to /dev/null, so you
-    never saw it.
-  * The model returned a KEEP list: every line it forgot to list was deleted.
-  * Ollama ran with its default 2-4k context, truncating long transcripts.
-
-v2:
-  * The local analysis decides; the LLM only reviews. It confirms or disputes
-    local flags and may point out paraphrased retakes the text matcher can't see.
-  * Anything ONLY the LLM wants removed becomes "review" (brown), never cut.
-  * Overlapping windows of ~60 phrases, long timeouts, retry with backoff on
-    429/503, a pause between calls for free-tier rate limits, and every failure
-    is reported in the job log and the final summary.
+The local analysis decides; the AI only reviews. It can confirm or dispute
+local flags and point out paraphrased retakes. Anything only the AI wants
+removed becomes "review" (brown) and is never cut. Requests are sent in
+overlapping windows of ~60 phrases, retried on rate limits, and every failure
+is reported.
 """
 from __future__ import annotations
 
@@ -100,7 +91,7 @@ def _call_once(provider: str, model: str, api_key: str, base_url: str, user_text
         raise LLMError("No endpoint URL configured for this provider.")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     if provider == "openrouter":
-        headers.update({"HTTP-Referer": "http://127.0.0.1", "X-Title": "ScriptCutter v2"})
+        headers.update({"HTTP-Referer": "http://127.0.0.1", "X-Title": "ScriptCutter"})
     payload = {"model": model, "temperature": 0.1,
                "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_text}]}
     if provider in ("groq", "openai_compatible"):

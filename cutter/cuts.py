@@ -173,12 +173,12 @@ def build_clips(decisions: list, regions: list, env, settings: dict = None,
     }
 
 
-def to_frames(clips: list, fps: float, src_frame_offset: int = 0, min_frames: int = 3) -> list:
+def to_frames(clips: list, fps: float, min_frames: int = 3) -> list:
     """Seconds -> source frames (end exclusive). Adjacent clips never overlap in source."""
     out = []
     for c in clips:
-        f_in = int(math.floor(c["start"] * fps + 0.5)) + src_frame_offset
-        f_out = int(math.floor(c["end"] * fps + 0.5)) + src_frame_offset
+        f_in = int(math.floor(c["start"] * fps + 0.5))
+        f_out = int(math.floor(c["end"] * fps + 0.5))
         if out and f_in < out[-1]["src_out"] and out[-1]["src_in"] < f_in:
             f_in = out[-1]["src_out"]
         if f_out - f_in < min_frames:
@@ -186,22 +186,4 @@ def to_frames(clips: list, fps: float, src_frame_offset: int = 0, min_frames: in
                 continue
             f_out = f_in + min_frames
         out.append(dict(c, src_in=f_in, src_out=f_out))
-    return out
-
-
-def layout(frame_clips: list, src_fps: float, tl_fps: float, overlap_frames: int = 0,
-           checkerboard: bool = False) -> list:
-    """
-    Record positions on the new timeline (timeline frames, relative to timeline start).
-    With checkerboard, clips alternate V1/V2 (A1/A2) and each overlaps the
-    previous one by `overlap_frames`.
-    """
-    rec = 0
-    out = []
-    for i, c in enumerate(frame_clips):
-        dur_tl = int(round((c["src_out"] - c["src_in"]) * tl_fps / src_fps))
-        ov = min(overlap_frames, max(0, dur_tl // 2)) if checkerboard and i > 0 else 0
-        start = max(0, rec - ov)
-        out.append(dict(c, rec_in=start, rec_out=start + dur_tl, track=(i % 2) + 1 if checkerboard else 1))
-        rec = start + dur_tl
     return out

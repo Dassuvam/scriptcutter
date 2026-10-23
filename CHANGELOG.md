@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0
+- Works with DaVinci Resolve Free as well as Studio: all Resolve work moved into `resolve/scriptcutter.lua`, run through `fuscript` (Studio) or from the Workspace > Scripts menu (Free).
+- Windows support: `Install ScriptCutter.bat` installs Python, ffmpeg and whisper.cpp; one cross-platform `install.py` handles models, the Resolve menu and the self-test.
+- All OS-specific locations live in `cutter/paths.py`; program locations are recorded at install time.
+- New check: a false start at the end of one line that is redone in the next line is cut word-accurately.
+- Code clean-up (dead code removed), developer guide (`DEVELOPMENT.md`), GitHub Actions for tests and releases.
+- The menu entry is now **ScriptCutter** (replaces ScriptCutterV2).
+
 ## 2.2.0
 - Calmer palette inspired by the editorial reference: warm charcoal (no pure black), cream and vermilion.
 - Removed the scenery artwork for a cleaner interface.
