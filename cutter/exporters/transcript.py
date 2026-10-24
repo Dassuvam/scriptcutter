@@ -41,8 +41,8 @@ def write_srt(edit: dict, path: str, view: str = "original") -> str:
 
 
 def write_txt(edit: dict, path: str, view: str = "original") -> str:
-    seconds = edit["duration"] / edit["fps"]
-    rows = [edit["name"], f"Final cut: {int(seconds // 60)}m {int(seconds % 60):02d}s", ""]
+    minutes, seconds = divmod(round(edit["duration"] / edit["fps"]), 60)
+    rows = [edit["name"], f"Final cut: {minutes}m {seconds:02d}s", ""]
     rows += [f"[{int(ln['start'] // 60):02d}:{int(ln['start'] % 60):02d}] {ln['text']}" for ln in lines(edit, view)]
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(rows) + "\n")

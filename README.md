@@ -44,23 +44,23 @@ On Windows, speech recognition runs on the processor, so use the default model. 
 2. Choose **Workspace → Scripts → ScriptCutter**. ScriptCutter opens in your browser.
 3. Choose **Talking head** or **Screen recording** and press **Analyse**.
 4. Check the list. Click **Brown** to see only the parts that need you, press ▶ to listen, and click **Keep** or **Cut**.
-5. Press **Create timeline in Resolve**.
+5. At the bottom, choose **Export as: DaVinci Resolve** and press **Create in Resolve**.
    - **Studio:** the new timeline appears by itself.
-   - **Free version:** go back to Resolve and choose **Workspace → Scripts → ScriptCutter - Build Timeline**.
+   - **Free version:** go back to Resolve and choose **Workspace → Scripts → ScriptCutter** once more. It builds the timeline.
 
 Your original timeline is never changed. Click **Help** (or press `?`) inside ScriptCutter for a simple guide.
 
 **Premiere Pro, Final Cut Pro or another app**
 1. Double-click `Open ScriptCutter` (`.command` on Mac, `.bat` on Windows). ScriptCutter opens in your browser.
 2. Choose **Video file**, drag your raw recording into the box, and press **Analyse**.
-3. Check the list as above. In the bottom bar, pick your app and press **Save**. The file is saved next to your video.
+3. Check the list as above. In the bottom bar, under **Export as**, pick **MP4 video** (the finished cut) or your editing app, and press the button next to it. The file is saved next to your video.
 4. **Premiere Pro:** File → Import, pick the `.xml` file. **Final Cut Pro:** File → Import → XML, pick the `.fcpxml` file. **Other apps:** import the `.edl` file.
 
 The cut arrives on one video track; brown parts have a marker with the reason. Overlapping A/B cuts and Voice Isolation are Resolve-only.
 
 **Script (optional):** if you recorded from a script, paste it in **Step 4** before pressing Analyse (Hindi, Hinglish or English). ScriptCutter keeps your last good take of every line and cuts the other takes and anything not in the script; longer unscripted parts stay brown.
 
-**Transcript:** press **Transcript** in the bottom bar to read and copy what is said in the final cut, or save it as text and subtitles (`.srt`). For Hindi videos, the **हिंदी / Hinglish / English** switch above the list picks the letters.
+**Transcript:** only when you want it, press **Transcript** in the bottom bar to read what is said in the final cut, line by line with times. Copy it, or download it as subtitles (`.srt`), text (`.txt`) or PDF. For Hindi videos, the **हिंदी / Hinglish / English** switch above the list picks the letters.
 
 **In the new timeline**
 - **Blue clips:** kept, sure.

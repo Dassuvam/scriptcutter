@@ -11,6 +11,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import threading
 import traceback
 import urllib.parse
@@ -22,7 +23,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from cutter import __version__, exporters, llm, paths, resolve_bridge  # noqa: E402
-from cutter.exporters.transcript import plain_text  # noqa: E402
+from cutter.exporters import transcript as transcript_out  # noqa: E402
 from cutter.media import cache_dir_for  # noqa: E402
 from cutter.project import Project  # noqa: E402
 from cutter.transcribe import find_whisper_cli, installed_models  # noqa: E402
@@ -68,6 +69,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _attachment(self, body: bytes, filename: str, ctype: str):
+        """A file the browser saves (to Downloads)."""
+        ascii_name = filename.encode("ascii", "replace").decode().replace("?", "_").replace('"', "")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{ascii_name}"; '
+                                                f"filename*=UTF-8''{urllib.parse.quote(filename)}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def download(self, job: Project, q: dict):
+        """?format=srt|txt&view=...&name=... -> the final cut's subtitles or text."""
+        fmt = q.get("format", "srt")
+        if fmt not in ("srt", "txt"):
+            return self._json({"error": "unknown format"}, 404)
+        edit = job.edit(q.get("name", "").strip())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = exporters.export(edit, fmt, os.path.join(tmp, "x"), q.get("view", "original"))
+            with open(path, "rb") as f:
+                body = f.read()
+        name = os.path.basename(job.output_base(edit["name"])) + exporters.FORMATS[fmt]["ext"]
+        return self._attachment(body, name, "application/x-subrip; charset=utf-8" if fmt == "srt"
+                                else "text/plain; charset=utf-8")
 
     def _json(self, data, code: int = 200):
         self._send(code, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
@@ -160,8 +187,14 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[3] == "transcript":
                     view = q.get("view", "original")
                     edit = job.edit()
-                    return self._json({"text": plain_text(edit, view), "seconds": edit["duration"] / edit["fps"],
+                    return self._json({"text": transcript_out.plain_text(edit, view),
+                                       "lines": transcript_out.lines(edit, view),
+                                       "seconds": edit["duration"] / edit["fps"],
                                        "pending": job.step("words").state in ("waiting", "running")})
+                if parts[3] == "download":
+                    return self.download(job, q)
+                if parts[3] == "render":
+                    return self._json(job.render)
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             traceback.print_exc()
@@ -198,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
         st = dict(resolve_bridge.status())
         st.update(app_version=__version__, whisper=bool(find_whisper_cli()), ffmpeg=bool(paths.find_program("ffmpeg")),
                   models=installed_models(),
-                  editors=[{"id": "resolve", "label": "DaVinci Resolve"}]
+                  editors=[{"id": "mp4", "label": "MP4 video"}, {"id": "resolve", "label": "DaVinci Resolve"}]
                   + [{"id": k, "label": exporters.FORMATS[k]["label"]} for k in exporters.EDITORS],
                   providers={k: {"label": v["label"], "model": v["model"]} for k, v in llm.PROVIDERS.items()})
         return st
@@ -257,23 +290,34 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def export(job: Project, body: dict) -> dict:
-        """{"format": "premiere" | "fcp" | "edl" | "transcript", "name", "view"} -> files next to the video."""
-        fmt, view = body.get("format", "premiere"), body.get("view", "original")
-        edit = job.edit(body.get("name", "").strip())
-        base = job.output_base(edit["name"])
-        if fmt == "transcript":
-            files = [exporters.export(edit, f, base, view) for f in exporters.TRANSCRIPT]
-            how = "Subtitles (.srt) work in every editor and on YouTube."
-        elif fmt in exporters.EDITORS:
-            files = [exporters.export(edit, fmt, base, view)]
-            how = exporters.FORMATS[fmt]["how"]
-        else:
+        """{"format": "mp4" | "premiere" | "fcp" | "edl", "name", "view"} -> a file next to the video."""
+        fmt, view = body.get("format", "mp4"), body.get("view", "original")
+        if fmt != "mp4" and fmt not in exporters.EDITORS:
             raise RuntimeError(f"unknown format {fmt}")
-        job.outputs += files
+        edit = job.edit(body.get("name", "").strip())
+        path = job.output_base(edit["name"]) + exporters.FORMATS[fmt]["ext"]
         job.approved = True
         learned = job.learn_from_choices()
-        job.rep.log("Saved " + ", ".join(os.path.basename(f) for f in files))
-        return {"files": files, "how": how, "learned_from": learned}
+        if fmt == "mp4":  # takes a while: made in the background, the page asks /render for progress
+            if job.render.get("state") == "running":
+                raise RuntimeError("A video is already being made for this cut.")
+            job.render = {"state": "running", "progress": 0.0, "file": path, "error": ""}
+
+            def make():
+                try:
+                    exporters.video.write(edit, path, view, progress=lambda f: job.render.update(progress=round(f, 3)))
+                    job.outputs.append(path)
+                    job.render.update(state="done", progress=1.0)
+                    job.rep.log("Saved " + os.path.basename(path))
+                except Exception as e:
+                    traceback.print_exc()
+                    job.render.update(state="error", error=str(e))
+            threading.Thread(target=make, daemon=True).start()
+            return {"rendering": True, "file": path, "how": exporters.FORMATS[fmt]["how"], "learned_from": learned}
+        exporters.export(edit, fmt, path[:-len(exporters.FORMATS[fmt]["ext"])], view)
+        job.outputs.append(path)
+        job.rep.log("Saved " + os.path.basename(path))
+        return {"files": [path], "how": exporters.FORMATS[fmt]["how"], "learned_from": learned}
 
     @staticmethod
     def reveal(job: Project, body: dict) -> dict:

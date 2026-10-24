@@ -36,7 +36,7 @@ const STAGES = {
   transcribe: "Transcribing", words: "Reading the words in your language", analyse: "Finding retakes", video: "Checking the screen", ai: "AI second opinion",
 };
 const SEND_LABELS = {
-  resolve: "Create timeline in Resolve", premiere: "Save for Premiere Pro", fcp: "Save for Final Cut Pro", edl: "Save EDL",
+  mp4: "Make the video", resolve: "Create in Resolve", premiere: "Save the XML", fcp: "Save the XML", edl: "Save the EDL",
 };
 const VIEW_ORDER = ["original", "hinglish", "english"];
 const VIEW_LABELS = { hinglish: "Hinglish", english: "English" };
@@ -313,7 +313,7 @@ function renderSteps(R) {
     return `<button class="step is-${flagged ? "flagged" : s.state}" data-step="${s.id}" title="${escapeHtml(s.error)}">`
       + `<i>${icon}</i>${escapeHtml(s.title)}${note ? `<small>${escapeHtml(note)}</small>` : ""}</button>`;
   });
-  chips.push(`<span class="step is-${R.job.approved ? "done" : "waiting"}"><i>${R.job.approved ? "✓" : "→"}</i>Send to your editor</span>`);
+  chips.push(`<span class="step is-${R.job.approved ? "done" : "waiting"}"><i>${R.job.approved ? "✓" : "→"}</i>Export</span>`);
   $("steps").innerHTML = chips.join("");
 }
 
@@ -604,7 +604,7 @@ async function buildInResolve() {
       voice_isolation: $("voiceIsolation").checked, markers: $("markers").checked,
     });
     if (r.pending) {
-      toast("Almost done: in DaVinci Resolve choose Workspace → Scripts → ScriptCutter - Build Timeline.");
+      toast("Almost done: in DaVinci Resolve choose Workspace → Scripts → ScriptCutter again. It builds the timeline.");
       return waitForMenuBuild(Date.now());
     }
     toast(...buildMessage(r));
@@ -624,23 +624,57 @@ async function saveFor(format) {
   } catch (e) { toast("Could not save: " + e.message, true); }
 }
 
+// MP4: made in the background; the bar under the dock shows how far it is
+async function makeVideo() {
+  $("sendButton").disabled = true;
+  $("renderProgress").hidden = false;
+  $("renderBar").style.width = "0%";
+  toast("Making the video. You can keep checking the list meanwhile…");
+  try {
+    const r = await api(`/api/job/${state.job}/export`, { format: "mp4", name: $("timelineName").value, view: currentView(state.review) });
+    for (;;) {
+      await new Promise((ok) => setTimeout(ok, 1000));
+      const s = await api(`/api/job/${state.job}/render`);
+      $("renderBar").style.width = `${Math.round((s.progress || 0) * 100)}%`;
+      if (s.state === "running") { toast(`Making the video… ${Math.round((s.progress || 0) * 100)}%`); continue; }
+      if (s.state === "error") throw new Error(s.error);
+      toast(`Saved "${basename(s.file)}" next to your video. ${r.how}`, false, s.file);
+      break;
+    }
+    refreshJob();
+  } catch (e) { toast("Could not make the video: " + e.message, true); }
+  $("renderProgress").hidden = true;
+  $("sendButton").disabled = false;
+}
+
 $("sendButton").addEventListener("click", () => {
   if (!state.job) return;
-  if (state.editor === "resolve") buildInResolve(); else saveFor(state.editor);
+  if (state.editor === "resolve") buildInResolve();
+  else if (state.editor === "mp4") makeVideo();
+  else saveFor(state.editor);
 });
 
 // ---------------------------------------------------------------- transcript of the final cut
+const stamp = (t) => `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+let transcript = null;
+
 async function loadTranscript() {
   const R = state.review;
+  const view = currentView(R);
   $("transcriptView").innerHTML = availableViews(R).length > 1 ? viewButtons(R) : "";
-  setSwitch("transcriptView", currentView(R));
+  setSwitch("transcriptView", view);
+  const q = `view=${view}&name=${encodeURIComponent($("timelineName").value)}`;
+  $("downloadSrt").href = `/api/job/${state.job}/download?format=srt&${q}`;
+  $("downloadTxt").href = `/api/job/${state.job}/download?format=txt&${q}`;
   try {
-    const r = await api(`/api/job/${state.job}/transcript?view=${currentView(R)}`);
-    $("transcriptText").textContent = r.text || "There are no words in the final cut.";
-    $("transcriptNote").textContent = r.pending
-      ? "The Hindi words are still being written. This shows what is ready; open it again in a moment."
-      : `Final cut: ${duration(r.seconds)}. Updates when you change Keep or Cut.`;
-  } catch (e) { $("transcriptText").textContent = e.message; }
+    transcript = await api(`/api/job/${state.job}/transcript?view=${view}`);
+    $("transcriptText").innerHTML = transcript.lines.length
+      ? transcript.lines.map((l) => `<li><time>${stamp(l.start)}</time><span>${escapeHtml(l.text)}</span></li>`).join("")
+      : "<li><span>There are no words in the final cut.</span></li>";
+    $("transcriptNote").textContent = transcript.pending
+      ? "The words are still being read. This shows what is ready; open it again in a moment."
+      : `Final cut: ${duration(transcript.seconds)}. It updates when you change Keep or Cut.`;
+  } catch (e) { $("transcriptText").innerHTML = `<li><span>${escapeHtml(e.message)}</span></li>`; }
 }
 $("transcriptButton").addEventListener("click", () => {
   if (!state.job) return;
@@ -653,17 +687,22 @@ closeOnBackdrop($("transcript"));
 onSwitch("transcriptView", (v) => { chooseView(v); loadTranscript(); });
 $("transcriptCopy").addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText($("transcriptText").textContent);
+    await navigator.clipboard.writeText(transcript ? transcript.text : "");
     $("transcriptNote").textContent = "Copied. Paste it anywhere.";
   } catch (e) { $("transcriptNote").textContent = "Copy is blocked here: select the text and press Ctrl/⌘ + C."; }
 });
-$("transcriptSave").addEventListener("click", async () => {
-  try {
-    const r = await api(`/api/job/${state.job}/export`, { format: "transcript", name: $("timelineName").value, view: currentView(state.review) });
-    $("transcript").close();
-    toast(`Saved the transcript, subtitles and edit data next to your video. ${r.how}`, false, r.files[0]);
-    refreshJob();
-  } catch (e) { $("transcriptNote").textContent = "Could not save: " + e.message; }
+// PDF: a clean page with the times, printed by the browser ("Save as PDF"), so Hindi letters come out right
+$("downloadPdf").addEventListener("click", () => {
+  if (!transcript) return;
+  const name = $("timelineName").value || `${state.review.timeline_name} - AI Cut`;
+  $("printArea").innerHTML = `<h1>${escapeHtml(name)}</h1><p>Transcript of the final cut · ${duration(transcript.seconds)}</p>`
+    + `<ol>${transcript.lines.map((l) => `<li><time>${stamp(l.start)}</time><span>${escapeHtml(l.text)}</span></li>`).join("")}</ol>`;
+  const title = document.title;
+  document.title = `${name} - transcript`;  // the suggested PDF file name
+  $("transcript").close();
+  window.print();
+  document.title = title;
+  openDialog($("transcript"));
 });
 
 // ---------------------------------------------------------------- start

@@ -1,7 +1,16 @@
 # Changelog
 
-## 3.2.0 (not released yet)
+## 3.2.0
+
+**Notes**
+- **Works best on a Mac** with Apple Silicon (M1 or newer). Speech recognition runs on the Mac's graphics chip, so the large, most accurate models are fast. On Windows it runs on the processor: it works, but it is several times slower, and the default (small) model is less accurate.
+- **For the best cut, give it your script.** Paste the script you recorded from in Step 4, complete and as close as possible to what you said. With a script, ScriptCutter knows which lines belong in the video and keeps your last good take of each.
+
 - **Script mode:** paste the script you recorded from (Hindi letters, Hinglish or English, mixed is fine) in Step 4. ScriptCutter finds every line in the recording, keeps the last good take of each line, and cuts the other takes, unfinished takes and short off-script bits. Longer new parts that are not in the script stay brown, in case they are a good ad-lib. The review shows how many lines were found and which were not. Command line: `--script script.txt`. Words are matched by sound, so Whisper's spellings (nekst / next, stoori / story) and lines said in your own words still count; a later take is never cut on the script alone. On a real Hinglish recording with the creator's own script, 95% of words were handled safely (kept or cut like the hand edit, or left brown), against 77% without the script.
+- **MP4 video of the final cut:** choose *Export as: MP4 video* and press *Make the video*. The finished cut (straight cuts, brown parts kept) is saved next to your video, ready to watch or upload; picture and sound stay in sync over any number of cuts.
+- **Simpler bottom bar:** *Transcript* and one *Export as* choice: MP4 video, DaVinci Resolve, Premiere Pro (XML), Final Cut Pro (XML) or another editor (EDL).
+- **Transcript only when you want it:** the Transcript window shows the final cut line by line with times. Copy the text, or download subtitles (.srt), text (.txt) or a PDF.
+- **One menu entry in Resolve:** *Workspace > Scripts > ScriptCutter* opens the app; in the free version of Resolve, choosing it again builds the prepared timeline. The separate *ScriptCutter - Build Timeline* entry is removed by the installer.
 - **Overlapping A/B cuts and AI Voice Isolation are now on by default** when the timeline is created in DaVinci Resolve (Voice Isolation needs Studio). Clips alternate between V1/A1 and V2/A2 with a 3-frame overlap. Earlier saved settings are updated to the new defaults once.
 
 ## 3.1.0

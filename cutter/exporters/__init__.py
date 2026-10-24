@@ -8,20 +8,22 @@ view picks the transcript text: "original" (spoken language), "hinglish" or
 """
 from __future__ import annotations
 
-from . import edl, fcp7, fcpxml, transcript
+from . import edl, fcp7, fcpxml, transcript, video
 
 FORMATS = {
-    "premiere": {"label": "Premiere Pro", "ext": ".xml", "write": fcp7.write,
+    "mp4": {"label": "MP4 video", "ext": ".mp4", "write": video.write,
+            "how": "Straight cuts with the brown parts kept. Ready to watch or upload."},
+    "premiere": {"label": "Premiere Pro (XML)", "ext": ".xml", "write": fcp7.write,
                  "how": "In Premiere Pro choose File → Import and pick this file. The cut opens as a new sequence."},
-    "fcp": {"label": "Final Cut Pro", "ext": ".fcpxml", "write": fcpxml.write,
+    "fcp": {"label": "Final Cut Pro (XML)", "ext": ".fcpxml", "write": fcpxml.write,
             "how": "In Final Cut Pro choose File → Import → XML and pick this file. The cut opens as a new project."},
-    "edl": {"label": "Other editors (EDL)", "ext": ".edl", "write": edl.write,
+    "edl": {"label": "Other editor (EDL)", "ext": ".edl", "write": edl.write,
             "how": "Import this EDL in your editor. If it asks for the media, point it to your original video."},
     "srt": {"label": "Subtitles (.srt)", "ext": " - subtitles.srt", "write": transcript.write_srt, "how": ""},
     "txt": {"label": "Transcript (.txt)", "ext": " - transcript.txt", "write": transcript.write_txt, "how": ""},
     "json": {"label": "Edit data (.json)", "ext": " - edit.json", "write": transcript.write_json, "how": ""},
 }
-EDITORS = ("premiere", "fcp", "edl")
+EDITORS = ("premiere", "fcp", "edl")  # files for editing apps; "mp4" is the finished video
 TRANSCRIPT = ("txt", "srt", "json")
 
 

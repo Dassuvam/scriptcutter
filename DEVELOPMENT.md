@@ -8,7 +8,8 @@ Everything is standard-library Python 3.9+ plus two external programs (ffmpeg, w
 cutter/                 the engine
   project.py              Project + Steps: cut -> script (background) -> outputs; each step can raise a flag
   edit.py                 the edit document every output reads (clips, markers, transcript)
-  exporters/              one module per output format: fcp7 (Premiere XML), fcpxml (Final Cut), edl, transcript
+  exporters/              one module per output format: video (MP4 via ffmpeg), fcp7 (Premiere XML), fcpxml
+                          (Final Cut), edl, transcript (srt, txt, json); the transcript PDF is printed by the browser
   restarts.py             restarts in the timed spoken-language words (also inside Whisper's long sentences)
   scriptmatch.py          script mode: the creator's script decides which take of every line is kept
   translit.py             Hindi (Devanagari) -> Hinglish, offline
@@ -26,7 +27,7 @@ cutter/                 the engine
   resolve_bridge.py       Python side of the Resolve bridge
 resolve/
   scriptcutter.lua        all Resolve work: read the open timeline, build the new one
-  *.lua.template          the two Workspace > Scripts menu entries (filled in by install.py)
+  *.lua.template          the Workspace > Scripts > ScriptCutter menu entry (filled in by install.py)
 web/server.py           local web app + JSON API (http://127.0.0.1:7870)
 web/static/             index.html, css/theme.css (all colours/fonts), css/app.css, js/app.js
 install.py              cross-platform installer: programs, models, Resolve menu, self-test
@@ -65,7 +66,7 @@ ScriptCutter is built to become a full editing engine (raw clip → cut → imag
 The free version of Resolve only runs scripts started from its own Workspace > Scripts menu; Studio also allows outside tools. Both routes run the same Lua file:
 
 - **Studio (live):** the app runs `fuscript -l lua resolve/scriptcutter.lua context|build ...`. Requires *Preferences → System → General → External scripting using = Local*.
-- **Free (menu):** "ScriptCutter" writes `bridge/context.json` and opens the app; "ScriptCutter - Build Timeline" builds from `bridge/plan.lua` and writes `bridge/result.json`, which the app polls.
+- **Free (menu):** "ScriptCutter" writes `bridge/context.json` and opens the app; choosing "ScriptCutter" again (within 30 minutes) builds from `bridge/plan.lua` and writes `bridge/result.json`, which the app polls.
 
 The bridge folder is `<app data>/bridge` (`paths.bridge_dir()`). Things learned the hard way in Resolve 21:
 - Resolve's Lua API tables contain an extra numeric entry; iterate them through `objects()`.

@@ -32,8 +32,8 @@ MODELS = {  # name: (file, size, what it is good for)
     "large-v3": ("ggml-large-v3.bin", "2.9 GB", "best for Hindi, Hinglish and other non-English speech"),
     "large-v3-turbo": ("ggml-large-v3-turbo.bin", "1.5 GB", "best for English"),
 }
-MENU_TEMPLATES = ["ScriptCutter.lua.template", "ScriptCutter - Build Timeline.lua.template"]
-OLD_MENU_SCRIPTS = ["ScriptCutterV2.lua"]
+MENU_TEMPLATES = ["ScriptCutter.lua.template"]
+OLD_MENU_SCRIPTS = ["ScriptCutterV2.lua", "ScriptCutter - Build Timeline.lua"]  # earlier versions' menu entries
 
 
 def step(text: str):

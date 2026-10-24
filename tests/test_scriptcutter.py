@@ -266,6 +266,30 @@ class ExportTests(unittest.TestCase):
         self.assertIn("hello there", plain_text(self.edit))
 
 
+@unittest.skipUnless(paths.find_program("ffmpeg"), "needs ffmpeg")
+class VideoExportTests(unittest.TestCase):
+    def test_mp4_has_the_cut_length_in_sync(self):
+        import subprocess
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "raw.mp4")
+        ffmpeg = paths.find_program("ffmpeg")
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-f", "lavfi",
+                        "-i", "sine=frequency=440:sample_rate=48000", "-t", "4", "-c:v", "libx264" if "libx264" in
+                        " ".join(exporters.video.video_encoder(ffmpeg)) else "mpeg4", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-shortest", src], check=True)
+        analyses = {src: {"path": src, "name": "raw.mp4", "language": "en", "translated": False,
+                          "info": {"fps": 25.0, "duration": 4.0, "has_video": True, "start_timecode": "00:00:00:00",
+                                   "width": 320, "height": 240, "audio_channels": 1, "sample_rate": 48000}}}
+        plan = [{"path": src, "src_fps": 25.0, "src_in": 0, "src_out": 25, "status": "keep", "reasons": [], "text": ""},
+                {"path": src, "src_fps": 25.0, "src_in": 50, "src_out": 85, "status": "review", "reasons": [], "text": ""}]
+        out = exporters.video.write(edit_doc.build("cut", plan, analyses), os.path.join(tmp, "cut.mp4"))
+        probe = subprocess.run([paths.find_program("ffprobe"), "-v", "error", "-show_entries", "stream=codec_type,duration",
+                                "-of", "csv=p=0", out], capture_output=True, text=True).stdout.split()
+        lengths = {kind: float(sec) for kind, sec in (line.split(",") for line in probe)}
+        self.assertAlmostEqual(lengths["video"], 2.4, delta=0.05)  # 25 + 35 frames
+        self.assertAlmostEqual(lengths["audio"], lengths["video"], delta=0.03)
+
+
 class TranslitTests(unittest.TestCase):
     def test_hinglish(self):
         self.assertEqual(translit.to_hinglish("क्या हाल है दोस्त"), "kya haal hai dost")

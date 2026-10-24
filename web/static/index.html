@@ -195,12 +195,14 @@
     <div class="dock-row">
       <div class="dock-summary" id="dockSummary"></div>
       <div class="dock-actions">
-        <input type="text" id="timelineName" placeholder="Name of the cut">
+        <input type="text" id="timelineName" placeholder="Name of the cut" title="Name of the new video, timeline or file">
         <button class="button button-small" id="transcriptButton">Transcript</button>
-        <select id="editor" title="The app you edit in"></select>
-        <button class="button button-small button-accent" id="sendButton">Create timeline in Resolve</button>
+        <label class="dock-label" for="editor">Export as</label>
+        <select id="editor"></select>
+        <button class="button button-small button-accent" id="sendButton">Export</button>
       </div>
     </div>
+    <div class="progress dock-progress" id="renderProgress" hidden><div id="renderBar"></div></div>
     <div class="toast" id="toast" hidden></div>
   </footer>
 
@@ -226,23 +228,23 @@
         <li>Choose <b>Talking head</b> (you talking to the camera) or <b>Screen recording</b> (a tutorial on your screen).</li>
         <li>Press <b>Analyse</b> and wait. A 5-minute video takes less than a minute.</li>
         <li>Check the list. Click <b>Brown</b> at the top to see only the parts that need your eyes. Press ▶ to listen, then click <b>Keep</b> or <b>Cut</b>.</li>
-        <li>Press <b>Create timeline in Resolve</b>. Your new, cleaned timeline opens in Resolve.</li>
+        <li>At the bottom, choose <b>Export as: DaVinci Resolve</b> and press <b>Create in Resolve</b>. Your new, cleaned timeline opens in Resolve, with overlapping cuts and Voice Isolation.</li>
       </ol>
 
-      <h3>Edit in Premiere Pro, Final Cut Pro or another app?</h3>
+      <h3>Get the finished video, or edit in another app</h3>
       <ol>
-        <li>Choose <b>Video file</b> and drag your raw recording into the box.</li>
+        <li>Choose <b>Video file</b> and drag your raw recording into the box (or use your Resolve timeline).</li>
         <li>Press <b>Analyse</b> and check the list, just like above.</li>
-        <li>In the bar at the bottom, pick your app and press <b>Save</b>. The file is saved next to your video.</li>
+        <li>In the bar at the bottom, pick what you want under <b>Export as</b>: <b>MP4 video</b> (the finished cut, ready to upload), <b>DaVinci Resolve</b>, <b>Premiere Pro</b>, <b>Final Cut Pro</b> or another editor. Then press the button next to it. Files are saved next to your video.</li>
         <li><b>Premiere Pro</b>: File → Import, pick the <b>.xml</b> file. <b>Final Cut Pro</b>: File → Import → XML, pick the <b>.fcpxml</b> file. <b>Other apps</b>: import the <b>.edl</b> file.</li>
       </ol>
-      <p>The cut opens on one video track. Brown parts have a marker with the reason (and an orange label in Premiere). Overlapping A/B cuts and Voice Isolation only work in DaVinci Resolve.</p>
+      <p>The MP4 has straight cuts and keeps the brown parts. In Premiere and Final Cut the cut opens on one video track, and brown parts have a marker with the reason. Overlapping A/B cuts and Voice Isolation only work in DaVinci Resolve.</p>
 
       <h3>Hindi letters or Hinglish?</h3>
       <p>For Hindi videos, the switch above the list shows the words in <b>हिंदी</b> letters, in <b>Hinglish</b> (Hindi in English letters, like a chat), or as an <b>English</b> translation. ScriptCutter compares retakes through the English translation and uses the Hindi words to find restarts inside long sentences.</p>
 
       <h3>Transcript of the final cut</h3>
-      <p>Press <b>Transcript</b> in the bottom bar to read or copy what is said in your finished cut, in the letters you picked. <b>Save</b> creates a text file, subtitles (<b>.srt</b>, works on YouTube and in every editor) and a data file for automation.</p>
+      <p>Only when you want it: press <b>Transcript</b> in the bottom bar to read what is said in your finished cut, line by line with the time. Copy it, or download it as subtitles (<b>.srt</b>, works on YouTube and in every editor), as text (<b>.txt</b>) or as a <b>PDF</b>.</p>
 
       <h3>Have a script? Paste it</h3>
       <p>If you recorded from a script, paste it in <b>Step 4</b> before pressing Analyse. Hindi letters, Hinglish or English all work, even mixed. ScriptCutter then finds every line in your recording, keeps your <b>last good take</b> of each line and cuts the other takes and anything that is not in the script. Longer parts that are not in the script stay <b>brown</b>, in case they are a good ad-lib. Above the list you see how many lines were found, and which ones were not.</p>
@@ -255,8 +257,8 @@
         <li><b>Studio</b>: everything above happens by itself.</li>
         <li><b>Free</b>: the free version only allows scripts started from its own menu, so there are two small extra clicks.
           Always open this page from <b>Workspace → Scripts → ScriptCutter</b> (do it again after you switch to another timeline).
-          After you press <b>Create timeline in Resolve</b>, go back to Resolve and choose
-          <b>Workspace → Scripts → ScriptCutter - Build Timeline</b>.</li>
+          After you press <b>Create in Resolve</b>, go back to Resolve and choose
+          <b>Workspace → Scripts → ScriptCutter</b> once more. It builds the timeline.</li>
         <li><b>AI Voice Isolation</b> only works in Studio. Everything else works in both.</li>
       </ul>
 
@@ -309,15 +311,20 @@
     <div class="help-body">
       <div class="toolbar">
         <div class="segmented compact" id="transcriptView"></div>
-        <div class="toolbar-group">
-          <button class="button button-small" id="transcriptCopy">Copy text</button>
-          <button class="button button-small button-primary" id="transcriptSave">Save .txt + subtitles</button>
-        </div>
+        <button class="button button-small" id="transcriptCopy">Copy text</button>
       </div>
       <div class="hint" id="transcriptNote"></div>
-      <div class="transcript-text" id="transcriptText"></div>
+      <ol class="transcript-lines" id="transcriptText"></ol>
+      <div class="download-row">
+        <b>Download</b>
+        <a class="button button-small" id="downloadSrt" download>Subtitles (.srt)</a>
+        <a class="button button-small" id="downloadTxt" download>Text (.txt)</a>
+        <button class="button button-small" id="downloadPdf">PDF</button>
+      </div>
+      <div class="hint">Downloads go to your Downloads folder. For the PDF, choose <b>Save as PDF</b> in the print window.</div>
     </div>
   </dialog>
+  <div class="print-area" id="printArea"></div>
 
   <audio id="audio" preload="none"></audio>
   <script src="/static/js/app.js"></script>

@@ -130,6 +130,7 @@ class Project:
         self.steps = [cls(self) for cls in STEPS]
         self.approved = False  # the creator sent the cut somewhere: the cut step's flag is cleared
         self.builds, self.pending_plan, self.recorded, self.outputs = [], None, {}, []
+        self.render = {"state": "idle"}  # the MP4 being made: state, progress, file, error
 
     def step(self, step_id: str) -> Step:
         return next(s for s in self.steps if s.id == step_id)

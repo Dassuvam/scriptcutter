@@ -6,7 +6,7 @@ Two routes, chosen automatically:
             Resolve's own `fuscript`, so reading and building are one click.
   * menu  - the free version only runs scripts started from its menu. The
             "ScriptCutter" menu entry saves the open timeline to
-            bridge/context.json; "ScriptCutter - Build Timeline" builds from
+            bridge/context.json; choosing "ScriptCutter" again builds from
             bridge/plan.lua and writes bridge/result.json.
 """
 from __future__ import annotations
@@ -154,7 +154,7 @@ def build(plan_clips: list, name: str, checkerboard: bool = True, overlap_frames
     """
     plan_id = uuid.uuid4().hex[:12]
     plan = {
-        "plan_id": plan_id, "name": name, "checkerboard": bool(checkerboard), "overlap": int(overlap_frames),
+        "plan_id": plan_id, "created": int(time.time()), "name": name, "checkerboard": bool(checkerboard), "overlap": int(overlap_frames),
         "voice_isolation": bool(voice_isolation), "voice_amount": 100, "markers": bool(markers),
         "clips": [{"path": c["path"], "fps": float(c["src_fps"]), "src_in": int(c["src_in"]),
                    "src_out": int(c["src_out"]), "status": c["status"],
@@ -177,7 +177,7 @@ def build(plan_clips: list, name: str, checkerboard: bool = True, overlap_frames
         res["mode"] = "live"
         return res
     return {"pending": True, "plan_id": plan_id, "mode": "menu",
-            "message": "Now in DaVinci Resolve choose Workspace > Scripts > ScriptCutter - Build Timeline."}
+            "message": "Now in DaVinci Resolve choose Workspace > Scripts > ScriptCutter again to build it."}
 
 
 def build_result(plan_id: str):
