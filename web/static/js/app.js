@@ -23,6 +23,8 @@ const state = {
   policy: "balanced",
   filter: "all",
   preview: store.get("preview", "video"),
+  editor: store.get("editor", "resolve"),
+  view: store.get("view", "hinglish"),
   job: null,
   review: null,
   selected: null,
@@ -33,6 +35,12 @@ const STAGES = {
   audio: "Reading audio", levels: "Measuring levels", language: "Detecting language",
   transcribe: "Transcribing", analyse: "Finding retakes", video: "Checking the screen", ai: "AI second opinion",
 };
+const SEND_LABELS = {
+  resolve: "Create timeline in Resolve", premiere: "Save for Premiere Pro", fcp: "Save for Final Cut Pro", edl: "Save EDL",
+};
+const VIEW_ORDER = ["original", "hinglish", "english"];
+const VIEW_LABELS = { hinglish: "Hinglish", english: "English" };
+const ORIGINAL_LABELS = { hi: "हिंदी", mr: "मराठी", ne: "नेपाली", bn: "বাংলা", ta: "தமிழ்", te: "తెలుగు", ur: "اردو" };
 const FOOTAGE_HINTS = {
   talking_head: "Silences are cut. Retakes are found from the words.",
   screen: "Silent parts where the screen changes stay as brown clips, so on-screen action is never lost.",
@@ -49,6 +57,7 @@ const clock = (t) => {
 };
 const duration = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${Math.round(s)}s`);
 const modelLabel = (m) => m.replace(/^ggml-|\.bin$/g, "");
+const basename = (p) => p.split(/[\\/]/).pop();
 
 async function api(path, body) {
   const options = body === undefined ? {} : {
@@ -60,9 +69,17 @@ async function api(path, body) {
   return data;
 }
 
-function toast(message, bad = false) {
+// a file path adds a "Show file" button that opens Finder / Explorer at it
+function toast(message, bad = false, file = "") {
   const t = $("toast");
   t.textContent = message;
+  if (file) {
+    const b = document.createElement("button");
+    b.className = "link-button";
+    b.textContent = "Show file";
+    b.addEventListener("click", () => api(`/api/job/${state.job}/reveal`, { path: file }).catch((e) => toast(e.message, true)));
+    t.append(" ", b);
+  }
   t.className = "toast" + (bad ? " is-bad" : "");
   t.hidden = false;
 }
@@ -93,11 +110,22 @@ $("themeToggle").addEventListener("click", () => {
   applyTheme(next);
 });
 
+// ---------------------------------------------------------------- dialogs
+// a click on the dark backdrop closes a dialog, but not the second click of a double-click that opened it
+function openDialog(d) {
+  if (d.open) return;
+  d.showModal();
+  d.openedAt = Date.now();
+}
+function closeOnBackdrop(d) {
+  d.addEventListener("click", (e) => { if (e.target === d && Date.now() - (d.openedAt || 0) > 500) d.close(); });
+}
+
 // ---------------------------------------------------------------- help
-const openHelp = () => { if (!$("help").open) $("help").showModal(); };
+const openHelp = () => openDialog($("help"));
 $("helpOpen").addEventListener("click", openHelp);
 $("helpClose").addEventListener("click", () => $("help").close());
-$("help").addEventListener("click", (e) => { if (e.target === $("help")) $("help").close(); });
+closeOnBackdrop($("help"));
 document.querySelectorAll("[data-help]").forEach((b) => b.addEventListener("click", openHelp));
 document.addEventListener("keydown", (e) => {
   if (e.key === "?" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) openHelp();
@@ -186,9 +214,22 @@ function fillChoices(s) {
   Object.entries(state.providers).forEach(([key, v]) => $("provider").add(new Option(v.label, key)));
   if (state.savedProvider) $("provider").value = state.savedProvider;
   showProvider(false);
+  (s.editors || []).forEach((e) => $("editor").add(new Option(e.label, e.id)));
+  $("editor").value = state.editor;
+  showEditor();
   if (!s.whisper) showError("whisper-cli is missing. Run the installer again.");
   else if (!(s.models || []).length) showError("No Whisper model found. Run the installer again.");
 }
+
+function showEditor() {
+  if (!SEND_LABELS[state.editor]) state.editor = "resolve";
+  $("sendButton").textContent = SEND_LABELS[state.editor];
+}
+$("editor").addEventListener("change", () => {
+  state.editor = $("editor").value;
+  store.set("editor", state.editor);
+  showEditor();
+});
 
 // ---------------------------------------------------------------- analyse
 function collectSettings() {
@@ -249,9 +290,91 @@ function render() {
   $("emptyState").hidden = true;
   $("reviewBody").hidden = false;
   $("dock").hidden = false;
+  renderSteps(R);
   renderStats(R);
+  renderViews(R);
   renderFiles(R);
+  watchSteps();
 }
+
+// the engine's steps, each with a flag when it needs the creator's eyes
+function renderSteps(R) {
+  const steps = (R.job.steps || []).filter((s) => s.state !== "skipped");
+  const chips = steps.map((s) => {
+    const flagged = s.state === "done" && s.flag;
+    const icon = flagged ? "⚑" : s.state === "running" ? `${Math.round(s.progress * 100)}%`
+      : { done: "✓", failed: "!", waiting: "…" }[s.state] || "";
+    const note = flagged ? s.flag : s.state === "failed" ? "did not work" : "";
+    return `<button class="step is-${flagged ? "flagged" : s.state}" data-step="${s.id}" title="${escapeHtml(s.error)}">`
+      + `<i>${icon}</i>${escapeHtml(s.title)}${note ? `<small>${escapeHtml(note)}</small>` : ""}</button>`;
+  });
+  chips.push(`<span class="step is-${R.job.approved ? "done" : "waiting"}"><i>${R.job.approved ? "✓" : "→"}</i>Send to your editor</span>`);
+  $("steps").innerHTML = chips.join("");
+}
+
+$("steps").addEventListener("click", (e) => {
+  const b = e.target.closest(".step.is-flagged");
+  if (b && b.dataset.step === "cut") {
+    state.filter = "review";
+    setSwitch("filterSwitch", "review");
+    render();
+  }
+});
+
+// background steps (the Hindi script) keep running after the review opens
+let stepTimer = null;
+function watchSteps() {
+  clearTimeout(stepTimer);
+  const busy = (state.review.job.steps || []).some((s) => s.state === "running" || s.state === "waiting");
+  if (!busy) return;
+  stepTimer = setTimeout(async () => {
+    try {
+      const j = await api(`/api/job/${state.job}`);
+      const changed = j.steps.some((s, i) => s.state !== state.review.job.steps[i].state);
+      if (changed) state.review = await api(`/api/job/${state.job}/review`);
+      else state.review.job = j;
+      render();
+    } catch (e) { /* the local server stopped */ }
+  }, 1500);
+}
+
+async function refreshJob() {
+  try {
+    state.review.job = await api(`/api/job/${state.job}`);
+    render();
+  } catch (e) { /* keep the page as it is */ }
+}
+
+// ---------------------------------------------------------------- words: हिंदी / Hinglish / English
+function availableViews(R) {
+  const have = new Set(R.files.flatMap((f) => f.views || []));
+  return VIEW_ORDER.filter((v) => have.has(v));
+}
+function currentView(R) {
+  const views = availableViews(R);
+  return views.includes(state.view) ? state.view : views[0] || "english";
+}
+function viewButtons(R) {
+  const lang = (R.files[0] || {}).language;
+  return availableViews(R).map((v) =>
+    `<button data-value="${v}">${escapeHtml(v === "original" ? ORIGINAL_LABELS[lang] || "Original" : VIEW_LABELS[v])}</button>`).join("");
+}
+function renderViews(R) {
+  $("viewSwitch").hidden = availableViews(R).length < 2;
+  $("viewSwitch").innerHTML = viewButtons(R);
+  setSwitch("viewSwitch", currentView(R));
+}
+function rowText(d, view) {
+  if (view === "original" && d.orig !== undefined) return d.orig || d.text;
+  if (view === "hinglish" && d.hinglish !== undefined) return d.hinglish || d.text;
+  return d.text;
+}
+function chooseView(v) {
+  state.view = v;
+  store.set("view", v);
+  render();
+}
+onSwitch("viewSwitch", chooseView);
 
 function renderStats(R) {
   const st = R.job.stats;
@@ -284,15 +407,16 @@ function renderFiles(R) {
     const rows = document.createElement("div");
     rows.className = "rows";
     const byId = Object.fromEntries(f.decisions.map((d) => [d.id, d]));
+    const view = currentView(R);
     f.decisions
       .filter((d) => state.filter === "all" || d.action === state.filter)
-      .forEach((d) => rows.appendChild(renderRow(d, f.path, byId)));
+      .forEach((d) => rows.appendChild(renderRow(d, f.path, byId, view)));
     if (!rows.children.length) rows.innerHTML = `<div class="empty">Nothing in this filter.</div>`;
     holder.appendChild(rows);
   });
 }
 
-function renderRow(d, path, byId) {
+function renderRow(d, path, byId, view) {
   const row = document.createElement("div");
   row.className = `row ${d.action}${state.selected === d.id ? " is-selected" : ""}`;
   row.dataset.id = d.id;
@@ -310,7 +434,7 @@ function renderRow(d, path, byId) {
   row.innerHTML = `
     <button class="play" data-play="${d.id}" title="Play">▶</button>
     <div class="row-time">${clock(d.start)}</div>
-    <div><div class="row-text">${tag}${d.text ? escapeHtml(d.text) : "<i>(no words)</i>"}</div>${why}</div>
+    <div><div class="row-text">${tag}${rowText(d, view) ? escapeHtml(rowText(d, view)) : "<i>(no words)</i>"}</div>${why}</div>
     <div class="choice">${choice}</div>`;
   return row;
 }
@@ -369,7 +493,8 @@ function select(row) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (!state.review || $("help").open || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  if (!state.review || $("help").open || $("transcript").open
+    || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
   const rows = [...document.querySelectorAll(".row")];
   if (!rows.length) return;
   let i = rows.findIndex((r) => r.dataset.id === state.selected);
@@ -452,12 +577,12 @@ async function waitForMenuBuild(started) {
       toast(...buildMessage(r));
     }
   } catch (e) { toast("Lost contact with ScriptCutter: " + e.message, true); }
-  $("buildButton").disabled = false;
+  $("sendButton").disabled = false;
+  refreshJob();
 }
 
-$("buildButton").addEventListener("click", async () => {
-  if (!state.job) return;
-  $("buildButton").disabled = true;
+async function buildInResolve() {
+  $("sendButton").disabled = true;
   toast("Creating the timeline in Resolve…");
   try {
     const r = await api(`/api/job/${state.job}/build`, {
@@ -472,15 +597,59 @@ $("buildButton").addEventListener("click", async () => {
   } catch (e) {
     toast("Could not create the timeline: " + e.message, true);
   }
-  $("buildButton").disabled = false;
+  $("sendButton").disabled = false;
+  refreshJob();
+}
+
+// Premiere Pro / Final Cut Pro / EDL: a file next to the video
+async function saveFor(format) {
+  try {
+    const r = await api(`/api/job/${state.job}/export`, { format, name: $("timelineName").value, view: currentView(state.review) });
+    toast(`Saved "${basename(r.files[0])}" next to your video. ${r.how}`, false, r.files[0]);
+    refreshJob();
+  } catch (e) { toast("Could not save: " + e.message, true); }
+}
+
+$("sendButton").addEventListener("click", () => {
+  if (!state.job) return;
+  if (state.editor === "resolve") buildInResolve(); else saveFor(state.editor);
 });
 
-$("exportButton").addEventListener("click", async () => {
-  if (!state.job) return;
+// ---------------------------------------------------------------- transcript of the final cut
+async function loadTranscript() {
+  const R = state.review;
+  $("transcriptView").innerHTML = availableViews(R).length > 1 ? viewButtons(R) : "";
+  setSwitch("transcriptView", currentView(R));
   try {
-    const r = await api(`/api/job/${state.job}/export`, {});
-    toast(`Saved ${r.edl} and ${r.report}`);
-  } catch (e) { toast("Export failed: " + e.message, true); }
+    const r = await api(`/api/job/${state.job}/transcript?view=${currentView(R)}`);
+    $("transcriptText").textContent = r.text || "There are no words in the final cut.";
+    $("transcriptNote").textContent = r.pending
+      ? "The Hindi words are still being written. This shows what is ready; open it again in a moment."
+      : `Final cut: ${duration(r.seconds)}. Updates when you change Keep or Cut.`;
+  } catch (e) { $("transcriptText").textContent = e.message; }
+}
+$("transcriptButton").addEventListener("click", () => {
+  if (!state.job) return;
+  $("transcriptText").textContent = "Loading…";
+  openDialog($("transcript"));
+  loadTranscript();
+});
+$("transcriptClose").addEventListener("click", () => $("transcript").close());
+closeOnBackdrop($("transcript"));
+onSwitch("transcriptView", (v) => { chooseView(v); loadTranscript(); });
+$("transcriptCopy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("transcriptText").textContent);
+    $("transcriptNote").textContent = "Copied. Paste it anywhere.";
+  } catch (e) { $("transcriptNote").textContent = "Copy is blocked here: select the text and press Ctrl/⌘ + C."; }
+});
+$("transcriptSave").addEventListener("click", async () => {
+  try {
+    const r = await api(`/api/job/${state.job}/export`, { format: "transcript", name: $("timelineName").value, view: currentView(state.review) });
+    $("transcript").close();
+    toast(`Saved the transcript, subtitles and edit data next to your video. ${r.how}`, false, r.files[0]);
+    refreshJob();
+  } catch (e) { $("transcriptNote").textContent = "Could not save: " + e.message; }
 });
 
 // ---------------------------------------------------------------- start

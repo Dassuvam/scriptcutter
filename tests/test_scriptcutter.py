@@ -16,7 +16,12 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 from cutter import analyze as an  # noqa: E402
-from cutter import cuts, export, llm, paths, resolve_bridge, text  # noqa: E402
+import xml.etree.ElementTree as ET  # noqa: E402
+
+from cutter import cuts, exporters, llm, paths, resolve_bridge, text, translit  # noqa: E402
+from cutter import edit as edit_doc  # noqa: E402
+from cutter.exporters.transcript import _srt_time, plain_text  # noqa: E402
+from cutter.project import Project  # noqa: E402
 from cutter.energy import Envelope  # noqa: E402
 from cutter.transcribe import _regular_loops, build_chunks, clean_segments  # noqa: E402
 
@@ -175,18 +180,116 @@ class TranscribeHelpers(unittest.TestCase):
         self.assertGreater(len(ch), 3)
 
 
-class ExportTests(unittest.TestCase):
-    def test_timecode_with_source_start(self):
-        self.assertEqual(export.tc_to_frames("01:00:00:00", 25), 90000)
-        self.assertEqual(export.frames_to_tc(90000 + 37, 25), "01:00:01:12")
+VIDEO = "/x/My Video.mov"
+PLAN = [{"path": VIDEO, "src_fps": 29.97, "src_in": 30, "src_out": 120, "status": "keep", "reasons": [],
+         "text": "hello there"},
+        {"path": VIDEO, "src_fps": 29.97, "src_in": 300, "src_out": 360, "status": "review",
+         "reasons": ["Maybe a retake"], "text": "again"}]
 
-    def test_edl_uses_source_rate(self):
-        plan = [{"path": "/x/a.mov", "src_fps": 29.97, "src_in": 300, "src_out": 330, "status": "keep", "reasons": []}]
-        out = os.path.join(tempfile.mkdtemp(), "t.edl")
-        export.export_edl(plan, out, "t", 24.0, {"/x/a.mov": "00:00:10:00"})
-        with open(out) as f:
+
+def fake_analyses(translated=False):
+    return {VIDEO: {"path": VIDEO, "name": "My Video.mov", "language": "hi", "translated": translated,
+                    "info": {"fps": 30000 / 1001, "duration": 60.0, "has_video": True, "start_timecode": "01:00:00:00",
+                             "width": 1920, "height": 1080, "audio_channels": 2, "sample_rate": 48000}}}
+
+
+def sample_edit(words=None):
+    return edit_doc.build("My Cut", PLAN, fake_analyses(translated=words is not None), 0.0, {VIDEO: words})
+
+
+class EditTests(unittest.TestCase):
+    def test_rates(self):
+        self.assertEqual(edit_doc.rate(30000 / 1001)["den"], 30000)
+        self.assertTrue(edit_doc.rate(23.976)["ntsc"])
+        self.assertEqual((edit_doc.rate(25)["timebase"], edit_doc.rate(25)["ntsc"]), (25, False))
+
+    def test_timecode_with_source_start(self):
+        self.assertEqual(edit_doc.tc_to_frames("01:00:00:00", 25), 90000)
+        self.assertEqual(edit_doc.frames_to_tc(90000 + 37, 25), "01:00:01:12")
+
+    def test_clips_follow_each_other_on_the_timeline(self):
+        e = sample_edit()
+        self.assertEqual([(c["rec_in"], c["rec_out"]) for c in e["clips"]], [(0, 90), (90, 150)])
+        self.assertEqual(e["markers"][0]["frame"], 90)
+        self.assertEqual(e["sources"]["s1"]["start_frame"], 108000)
+
+    def test_transcript_has_only_words_in_the_cut(self):
+        words = [{"w": "नमस्ते", "start": 1.1, "end": 1.5}, {"w": "हटाया", "start": 5.0, "end": 5.5},
+                 {"w": "दोस्तों।", "start": 10.2, "end": 10.6}]
+        t = sample_edit(words)["transcript"]
+        self.assertEqual([w["text"] for w in t["words"]], ["नमस्ते", "दोस्तों।"])
+        self.assertAlmostEqual(t["words"][1]["start"], 90 / 29.97 + 10.2 - 300 / 29.97, places=2)
+        self.assertEqual([ln["text"] for ln in t["hinglish"]], ["namaste", "doston."])  # 2.7 s apart: two lines
+        self.assertEqual(t["english"][0]["text"], "hello there")
+
+
+class ExportTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.edit = sample_edit()
+
+    def write(self, fmt):
+        return exporters.export(self.edit, fmt, os.path.join(self.dir, "cut"))
+
+    def test_edl_uses_source_timecode(self):
+        with open(self.write("edl")) as f:
             body = f.read()
-        self.assertIn("00:00:20:00 00:00:21:00", body)  # 10 s start TC + frame 300 @ 30 base
+        self.assertIn("01:00:01:00 01:00:04:00 01:00:00:00 01:00:03:00", body)
+        self.assertIn("* REVIEW: Maybe a retake", body)
+
+    def test_premiere_xml(self):
+        seq = ET.parse(self.write("premiere")).getroot().find("sequence")
+        self.assertEqual(seq.findtext("duration"), "150")
+        self.assertEqual(seq.findtext("rate/ntsc"), "TRUE")
+        vclips = seq.findall("media/video/track/clipitem")
+        self.assertEqual([c.findtext("in") for c in vclips], ["30", "300"])
+        self.assertEqual([c.findtext("start") for c in vclips], ["0", "90"])
+        self.assertEqual(vclips[0].findtext("file/pathurl"), "file://localhost/x/My%20Video.mov")
+        self.assertIsNone(vclips[1].find("file/pathurl"))  # later clips only reference the file
+        self.assertEqual(len(seq.findall("media/audio/track")), 2)
+        self.assertEqual(len(vclips[0].findall("link")), 3)
+        self.assertEqual(vclips[1].findtext("labels/label2"), "Mango")
+        self.assertEqual(seq.findtext("marker/in"), "90")
+
+    def test_final_cut_xml(self):
+        root = ET.parse(self.write("fcp")).getroot()
+        self.assertEqual(root.find("resources/asset").get("start"), "18018/5s")  # 01:00:00:00 at 29.97
+        clips = root.findall(".//spine/asset-clip")
+        self.assertEqual([c.get("offset") for c in clips], ["0s", "3003/1000s"])
+        self.assertEqual(root.find("resources/asset/media-rep").get("src"), "file:///x/My%20Video.mov")
+        self.assertIsNotNone(clips[1].find("marker"))
+
+    def test_subtitles(self):
+        self.assertEqual(_srt_time(3661.5), "01:01:01,500")
+        with open(self.write("srt"), encoding="utf-8") as f:
+            self.assertTrue(f.read().startswith("1\n00:00:00,000 --> "))
+        self.assertIn("hello there", plain_text(self.edit))
+
+
+class TranslitTests(unittest.TestCase):
+    def test_hinglish(self):
+        self.assertEqual(translit.to_hinglish("क्या हाल है दोस्त"), "kya haal hai dost")
+        self.assertEqual(translit.to_hinglish("मित्र करना बातें"), "mitra karna baatein")
+        self.assertEqual(translit.to_hinglish("चलो, let's go।"), "chalo, let's go.")
+
+    def test_detects_script(self):
+        self.assertTrue(translit.has_devanagari("ok नमस्ते"))
+        self.assertFalse(translit.has_devanagari("namaste"))
+
+
+class ProjectTests(unittest.TestCase):
+    def test_missing_file_stops_at_the_cut_step(self):
+        p = Project("file", "/no/such/video.mov")
+        p.run()
+        self.assertEqual(p.state, "error")
+        self.assertEqual([s["state"] for s in p.public()["steps"]], ["failed", "waiting"])
+
+    def test_cut_step_flags_brown_clips_until_the_cut_is_sent(self):
+        p = Project("file", "x.mov")
+        p.result, p.step("cut").state = {"stats": {"review_clips": 2}}, "done"
+        self.assertEqual(p.public()["steps"][0]["flag"], "2 to check")
+        p.approved = True
+        self.assertEqual(p.public()["steps"][0]["flag"], "")
 
 
 class LLMParse(unittest.TestCase):

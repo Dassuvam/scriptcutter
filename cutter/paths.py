@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 
 APP_NAME = "ScriptCutter"
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -121,3 +122,11 @@ def find_program(name: str) -> str:
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return ""
+
+
+def reveal(path: str):
+    """Show a file in Finder / Explorer."""
+    if IS_WINDOWS:
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+    else:
+        subprocess.Popen(["open", "-R", path])

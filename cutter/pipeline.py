@@ -3,6 +3,11 @@ Source file -> analysis -> clip plan.
 
 Audio, transcript, voice and screen-motion results are cached per file, so
 changing the policy, padding or your own choices re-cuts instantly.
+
+Two transcripts can exist per file: the one the cut is analysed from (for
+non-English speech usually Whisper's English translation) and the words in the
+spoken language (`original_words`), which the review and the final transcript
+show. When the analysis already ran in the spoken language they are the same.
 """
 from __future__ import annotations
 
@@ -36,6 +41,9 @@ DEFAULT_SETTINGS = {
     "use_vad": True,            # Silero voice detection when installed
     "learn": True,              # apply what was learned from your past choices
 }
+
+# one Whisper at a time: two large models at once can run a laptop out of memory
+WHISPER_LOCK = threading.Lock()
 
 
 class Reporter:
@@ -90,6 +98,36 @@ def _save_json(path, data):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
     os.replace(tmp, path)
+
+
+def _transcript_key(model: str, lang: str, translate: bool, sens: float, voice_used: bool) -> str:
+    return (f"transcript_{os.path.basename(model)}_{lang}_{'en' if translate else 'orig'}_{sens:+.0f}"
+            f"{'_vad' if voice_used else ''}.json")
+
+
+def _transcribe(log, *args, **kwargs) -> dict:
+    if not WHISPER_LOCK.acquire(blocking=False):
+        log("Waiting for the speech engine to finish the previous script...")
+        WHISPER_LOCK.acquire()
+    try:
+        t0 = time.time()
+        tr = transcribe(*args, log=log, **kwargs)
+        tr["seconds"] = round(time.time() - t0, 1)
+        return tr
+    finally:
+        WHISPER_LOCK.release()
+
+
+def words_from_segments(segments: list) -> list:
+    """Timed words; a segment without word timings (e.g. a collapsed loop) counts as one word."""
+    out = []
+    for seg in segments:
+        words = [w for w in seg.get("words", []) if w.get("w")]
+        if words:
+            out += [{"w": w["w"], "start": w["start"], "end": w["end"]} for w in words]
+        else:
+            out.append({"w": seg["text"], "start": seg["start"], "end": seg["end"]})
+    return out
 
 
 def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: bool = True) -> dict:
@@ -179,17 +217,13 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
 
     # transcript (cached)
     rep.set("transcribe")
-    key = (f"transcript_{os.path.basename(model)}_{lang}_{'en' if translate else 'orig'}_{sens:+.0f}"
-           f"{'_vad' if voice_used else ''}.json")
-    tpath = os.path.join(cdir, key)
+    tpath = os.path.join(cdir, _transcript_key(model, lang, translate, sens, voice_used))
     tr = _load_json(tpath) if use_cache else None
     if tr:
         rep.log("Using cached transcript (delete it from the cache folder to redo)")
     else:
-        t0 = time.time()
-        tr = transcribe(wav, loose, env.duration, env, model, lang, translate,
-                        progress=lambda f: rep.set("transcribe", f), log=rep.log)
-        tr["seconds"] = round(time.time() - t0, 1)
+        tr = _transcribe(rep.log, wav, loose, env.duration, env, model, lang, translate,
+                         progress=lambda f: rep.set("transcribe", f))
         _save_json(tpath, tr)
     segs = clean_segments(tr["raw"], regions)
     rep.log(f"{len(segs)} phrases transcribed"
@@ -263,7 +297,27 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
         "learned": learned,
         "transcribe_seconds": tr.get("seconds"),
         "_env": env,
+        "_words": None if translate else words_from_segments(segs),
+        "_speech": {"wav": wav, "loose": loose, "voice_used": voice_used, "sens": sens, "model": s["model"]},
     }
+
+
+def original_words(analysis: dict, progress=None, log=print, use_cache: bool = True) -> list:
+    """Words in the spoken language with source times (Hindi script for Hindi). Cached per file."""
+    if analysis.get("_words") is not None:
+        return analysis["_words"]
+    sp, lang = analysis["_speech"], analysis["language"]
+    model = pick_model(sp["model"], translate=False, language=lang)
+    tpath = os.path.join(cache_dir_for(analysis["path"]),
+                         _transcript_key(model, lang, False, sp["sens"], sp["voice_used"]))
+    tr = _load_json(tpath) if use_cache else None
+    if not tr:
+        log(f"{analysis['name']}: writing the {lang} script with {os.path.basename(model)}")
+        env = analysis["_env"]
+        tr = _transcribe(log, sp["wav"], sp["loose"], env.duration, env, model, lang, False, progress=progress)
+        _save_json(tpath, tr)
+    analysis["_words"] = words_from_segments(clean_segments(tr["raw"], analysis["regions"]))
+    return analysis["_words"]
 
 
 def plan_for_sources(sources: list, analyses: dict, settings: dict) -> dict:

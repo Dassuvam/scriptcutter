@@ -5,7 +5,11 @@ Everything is standard-library Python 3.9+ plus two external programs (ffmpeg, w
 ## Layout
 
 ```
-cutter/                 analysis engine
+cutter/                 the engine
+  project.py              Project + Steps: cut -> script (background) -> outputs; each step can raise a flag
+  edit.py                 the edit document every output reads (clips, markers, transcript)
+  exporters/              one module per output format: fcp7 (Premiere XML), fcpxml (Final Cut), edl, transcript
+  translit.py             Hindi (Devanagari) -> Hinglish, offline
   paths.py                every OS-specific folder and program lookup (start here when porting)
   media.py                ffprobe / ffmpeg: probe, extract 16 kHz audio, screen-motion scan; per-file cache
   energy.py               10 ms loudness envelope, adaptive speech detection
@@ -16,9 +20,8 @@ cutter/                 analysis engine
   learn.py                adjusts confidences from the user's past overrides
   llm.py                  optional AI reviewer (Gemini, Groq, OpenRouter, Ollama, OpenAI-compatible)
   cuts.py                 decisions -> clips in source seconds/frames (padding, pauses, review clips)
-  pipeline.py             orchestration, caching, progress reporting
+  pipeline.py             per-file analysis, caching, progress; original-language words
   resolve_bridge.py       Python side of the Resolve bridge
-  export.py               EDL and JSON report
 resolve/
   scriptcutter.lua        all Resolve work: read the open timeline, build the new one
   *.lua.template          the two Workspace > Scripts menu entries (filled in by install.py)
@@ -37,7 +40,18 @@ tests/                  python3 tests/test_scriptcutter.py
 3. **Words:** `transcribe.py` sends speech to whisper-cli in chunks of at most 24 s, each decoded independently (no text context between chunks). That stops repetition loops and timestamp drift on long files. Non-English speech is analysed through Whisper's English translation: repeated takes translate to near-identical sentences, and it is far more stable than decoding Devanagari with small models. Hallucinations ("Thank you for watching" over typing, machine-regular repeats) are filtered in `clean_segments`.
 4. **Decisions:** `analyze.py` compares each phrase with the next ~2 minutes. The last complete take wins; re-recorded blocks, restart cues, fillers and mid-line restarts are detected. Each decision gets a removal confidence. `apply_policy` maps it to remove / review (Brown) / keep (Blue) using the Cautious / Balanced / Aggressive thresholds. The AI reviewer may only confirm or dispute; AI-only flags are capped at review.
 5. **Clips:** `cuts.py` turns decisions into clips: padding is fenced so it never leaks into a removed take, pauses up to `max_pause` are kept, and review items are always separate clips.
-6. **Resolve:** `resolve_bridge.py` writes the plan as a Lua table (`bridge/plan.lua`); `resolve/scriptcutter.lua` builds the timeline, places one clip per call, colours clips Blue/Brown and adds Cocoa markers.
+6. **Script:** for non-English speech the analysis runs on the English translation. Afterwards the `script` step transcribes once more in the spoken language (word timings, Hindi letters) in the background; `translit.py` turns it into Hinglish. The review and the final transcript use these words.
+7. **Outputs:** `Project.edit()` builds the edit document (`edit.py`): clips in timeline and source frames, markers for brown clips, and the transcript of the final cut on the timeline clock. Every format in `exporters/` reads only this document.
+8. **Resolve:** `resolve_bridge.py` writes the plan as a Lua table (`bridge/plan.lua`); `resolve/scriptcutter.lua` builds the timeline, places one clip per call, colours clips Blue/Brown and adds Cocoa markers.
+
+## Growing the engine
+
+ScriptCutter is built to become a full editing engine (raw clip → cut → images → generated shots → final video) while the page stays simple for creators.
+
+- **A new step** (captions, B-roll images, generated video, music): subclass `Step` in `cutter/project.py`, set `id` and `title`, implement `run()`, and add it to `STEPS`. Write the result into the project (and later into the edit document as a new list next to `clips`, e.g. `overlays`). Return a short note from `flag()` when the creator should check the result ("5 images to approve"); the page shows it as ⚑ automatically. Set `background = True` when the review can open before the step finishes. Steps that call outside services (image or video generation) should read their keys from the settings like `llm.py` does and fail softly: a failed background step is shown, it never breaks the cut.
+- **A new output format:** add a module to `cutter/exporters/` with `write(edit, path, view)` and one entry in `FORMATS` (and `EDITORS` if it is an editing app). The bottom bar lists editing apps from `/api/status`.
+- **The edit document** has a `version` field. Add fields rather than changing existing ones, and bump the version when a change would break a reader.
+- Keep the page creator-friendly: one main button, plain words, and each new step as one chip in the step strip.
 
 ## The Resolve bridge (Free and Studio)
 
@@ -57,6 +71,7 @@ The bridge folder is `<app data>/bridge` (`paths.bridge_dir()`). Things learned 
 ```bash
 python3 web/server.py                    # http://127.0.0.1:7870
 python3 cli.py analyze --video clip.mp4  # decisions in the terminal
+python3 cli.py analyze --video clip.mp4 --xml cut.xml --srt cut.srt --view hinglish
 python3 tests/test_scriptcutter.py       # unit tests (+ an end-to-end test on macOS using `say`)
 ```
 
@@ -67,7 +82,7 @@ Conventions: standard library only; colours only in `theme.css`; OS-specific pat
 ## Release
 
 1. Update `VERSION` and add a `## <version>` section to `CHANGELOG.md`.
-2. Commit, then tag and push: `git tag v3.0.0 && git push origin main --tags`.
+2. Commit, then tag and push: `git tag v3.1.0 && git push origin main v3.1.0`. (Push one tag at a time: GitHub skips tag events when more than three tags are pushed at once.)
 3. The `release` workflow runs the tests, builds `ScriptCutter.zip` and publishes a GitHub release with the changelog section as notes.
 
 To build locally: `python3 tools/build_release.py` (creates `dist/`).

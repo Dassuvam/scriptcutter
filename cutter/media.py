@@ -59,6 +59,10 @@ def probe(path: str) -> dict:
         "has_video": video is not None,
         "audio_streams": len(audios),
         "start_timecode": timecode or "00:00:00:00",
+        "width": int(video.get("width") or 0) if video else 0,
+        "height": int(video.get("height") or 0) if video else 0,
+        "audio_channels": int(audios[0].get("channels") or 2) if audios else 0,
+        "sample_rate": int(audios[0].get("sample_rate") or 48000) if audios else 48000,
     }
 
 

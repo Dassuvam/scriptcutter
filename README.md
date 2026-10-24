@@ -1,11 +1,12 @@
 # ScriptCutter
 
-**Automatic retake removal for DaVinci Resolve.** Record the way you always do: stumble, repeat lines, say "let me do that again". ScriptCutter finds the retakes and long pauses and builds a clean new timeline that keeps your last good take.
+**Automatic retake removal for video creators.** Record the way you always do: stumble, repeat lines, say "let me do that again". ScriptCutter finds the retakes and long pauses and builds a clean new timeline that keeps your last good take, in DaVinci Resolve, Premiere Pro, Final Cut Pro or any editor that reads an EDL.
 
 - **Free and private.** Speech recognition runs on your computer. Nothing is uploaded.
 - **Never cuts blindly.** Parts it is sure about are **Blue**. Parts it is unsure about stay in the timeline as **Brown**, with a marker that says why.
-- **Hindi, Hinglish, English** and the other languages Whisper understands.
-- **Works with DaVinci Resolve Free and Studio.** Only AI Voice Isolation needs Studio.
+- **Hindi, Hinglish, English** and the other languages Whisper understands. Read Hindi videos in Hindi letters or in Hinglish with one switch.
+- **Works with DaVinci Resolve Free and Studio**, and saves files for **Premiere Pro**, **Final Cut Pro** and other editors.
+- **Transcript of the final cut**, ready to copy, plus subtitles (.srt).
 - **Learns your taste.** Your Keep / Cut corrections improve the next video.
 
 ---
@@ -15,7 +16,7 @@
 | | macOS | Windows |
 |---|---|---|
 | System | macOS 12 or newer. Apple Silicon (M1 or newer) recommended | Windows 10 or 11, 64-bit |
-| DaVinci Resolve | 18.5 or newer, Free or Studio | 18.5 or newer, Free or Studio |
+| Editing app | DaVinci Resolve 18.5+ (Free or Studio), Premiere Pro, Final Cut Pro, or any app that imports an EDL | DaVinci Resolve 18.5+, Premiere Pro, or any app that imports an EDL |
 | Disk space | about 1 GB (plus 2–3 GB for the optional large models) | same |
 | Internet | only while installing | only while installing |
 
@@ -47,6 +48,16 @@ On Windows, speech recognition runs on the processor, so use the default model. 
    - **Free version:** go back to Resolve and choose **Workspace → Scripts → ScriptCutter - Build Timeline**.
 
 Your original timeline is never changed. Click **Help** (or press `?`) inside ScriptCutter for a simple guide.
+
+**Premiere Pro, Final Cut Pro or another app**
+1. Double-click `Open ScriptCutter` (`.command` on Mac, `.bat` on Windows). ScriptCutter opens in your browser.
+2. Choose **Video file**, drag your raw recording into the box, and press **Analyse**.
+3. Check the list as above. In the bottom bar, pick your app and press **Save**. The file is saved next to your video.
+4. **Premiere Pro:** File → Import, pick the `.xml` file. **Final Cut Pro:** File → Import → XML, pick the `.fcpxml` file. **Other apps:** import the `.edl` file.
+
+The cut arrives on one video track; brown parts have a marker with the reason. Overlapping A/B cuts and Voice Isolation are Resolve-only.
+
+**Transcript:** press **Transcript** in the bottom bar to read and copy what is said in the final cut, or save it as text and subtitles (`.srt`). For Hindi videos, the **हिंदी / Hinglish / English** switch above the list picks the letters.
 
 **In the new timeline**
 - **Blue clips:** kept, sure.

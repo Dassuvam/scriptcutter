@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0
+- **Premiere Pro, Final Cut Pro and other editors:** pick your app in the bottom bar and press Save. ScriptCutter writes a Premiere Pro XML, a Final Cut Pro FCPXML or an EDL next to your video. Brown parts get a marker with the reason (and an orange label in Premiere). One video track; A/B overlap and Voice Isolation stay Resolve-only.
+- **Transcript of the final cut:** the new Transcript button shows what is said in the finished cut, ready to copy, and saves a text file, subtitles (.srt) and an edit-data file (.json) for automation.
+- **हिंदी / Hinglish / English switch:** for Hindi videos the review shows the words in Hindi letters, in Hinglish (Hindi in English letters, like a chat) or as the English translation. The Hindi words are written in the background after the cut, so the review opens as fast as before.
+- **Steps with flags:** the top of the review shows each step of the work, with ✓ when done and ⚑ when it needs your eyes. The engine behind it (`cutter/project.py`) is ready for new steps such as captions, B-roll images and generated shots.
+- "Show file" opens Finder / Explorer at a saved file. A double-click no longer closes the Help window right after opening it.
+- Developers: one edit document (`cutter/edit.py`) feeds every output; formats live in `cutter/exporters/`. The command line gained `--xml`, `--fcpxml`, `--srt`, `--transcript` and `--view`.
+
 ## 3.0.0
 - Works with DaVinci Resolve Free as well as Studio: all Resolve work moved into `resolve/scriptcutter.lua`, run through `fuscript` (Studio) or from the Workspace > Scripts menu (Free).
 - Windows support: `Install ScriptCutter.bat` installs Python, ffmpeg and whisper.cpp; one cross-platform `install.py` handles models, the Resolve menu and the self-test.

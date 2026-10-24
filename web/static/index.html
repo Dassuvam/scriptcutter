@@ -10,7 +10,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="wordmark"><b>ScriptCutter</b><span>retake-aware cutting for DaVinci Resolve</span></div>
+    <div class="wordmark"><b>ScriptCutter</b><span>retake-aware cutting for creators</span></div>
     <div class="topbar-right">
       <div class="status"><span class="status-dot" id="statusDot"></span><span id="statusText">Looking for DaVinci Resolve…</span></div>
       <button class="button button-small" id="helpOpen" title="How to use ScriptCutter (?)">Help</button>
@@ -126,6 +126,7 @@
             <div><label class="field-label" for="overlap">Overlap (frames)</label><input type="number" id="overlap" value="3" min="1" max="12"></div>
           </div>
           <label class="check"><input type="checkbox" id="voiceIsolation"><span>AI Voice Isolation<small>DaVinci Resolve Studio only.</small></span></label>
+          <div class="hint">These apply when you create the timeline in DaVinci Resolve.</div>
         </details>
 
         <button class="button button-primary button-block" id="analyse">Analyse</button>
@@ -146,11 +147,12 @@
       <span class="spine">review</span>
       <div class="empty" id="emptyState">
         <h2>Nothing analysed yet</h2>
-        <p>Pick a source and press Analyse. You will check every decision here before anything reaches Resolve.</p>
+        <p>Pick a source and press Analyse. You will check every decision here before anything reaches your editor.</p>
         <p>First time? <button class="link-button" data-help>Read the 2-minute guide</button></p>
       </div>
 
       <div class="review-body" id="reviewBody" hidden>
+        <div class="steps" id="steps"></div>
         <div class="stats" id="stats"></div>
         <div class="legend">
           <span><span class="swatch keep"></span>Blue: keep (sure)</span>
@@ -172,8 +174,11 @@
             <button class="button button-small" data-bulk="keep">All brown → Keep</button>
             <button class="button button-small" data-bulk="remove">All brown → Cut</button>
           </div>
-          <div class="segmented compact" id="previewSwitch">
-            <button data-value="video" class="is-on">▶ Video</button><button data-value="audio">▶ Audio only</button>
+          <div class="toolbar-group">
+            <div class="segmented compact" id="viewSwitch" title="Show the words in Hindi letters, in English letters (Hinglish) or as an English translation" hidden></div>
+            <div class="segmented compact" id="previewSwitch">
+              <button data-value="video" class="is-on">▶ Video</button><button data-value="audio">▶ Audio only</button>
+            </div>
           </div>
         </div>
         <div class="preview" id="preview" hidden><video id="video" playsinline preload="metadata"></video></div>
@@ -186,9 +191,10 @@
     <div class="dock-row">
       <div class="dock-summary" id="dockSummary"></div>
       <div class="dock-actions">
-        <input type="text" id="timelineName" placeholder="New timeline name">
-        <button class="button button-small" id="exportButton">Export EDL + report</button>
-        <button class="button button-small button-accent" id="buildButton">Create timeline in Resolve</button>
+        <input type="text" id="timelineName" placeholder="Name of the cut">
+        <button class="button button-small" id="transcriptButton">Transcript</button>
+        <select id="editor" title="The app you edit in"></select>
+        <button class="button button-small button-accent" id="sendButton">Create timeline in Resolve</button>
       </div>
     </div>
     <div class="toast" id="toast" hidden></div>
@@ -209,7 +215,7 @@
         <li>Set <b>External scripting using</b> to <b>Local</b>, click <b>Save</b>, and restart Resolve. (Studio only. The free version doesn't need this.)</li>
       </ol>
 
-      <h3>Cut a video in 6 steps</h3>
+      <h3>Cut a video in 6 steps (DaVinci Resolve)</h3>
       <ol>
         <li>In Resolve, put your raw recording on <b>video track 1</b> of a timeline.</li>
         <li>Open <b>Workspace → Scripts → ScriptCutter</b>. This page opens.</li>
@@ -218,6 +224,24 @@
         <li>Check the list. Click <b>Brown</b> at the top to see only the parts that need your eyes. Press ▶ to listen, then click <b>Keep</b> or <b>Cut</b>.</li>
         <li>Press <b>Create timeline in Resolve</b>. Your new, cleaned timeline opens in Resolve.</li>
       </ol>
+
+      <h3>Edit in Premiere Pro, Final Cut Pro or another app?</h3>
+      <ol>
+        <li>Choose <b>Video file</b> and drag your raw recording into the box.</li>
+        <li>Press <b>Analyse</b> and check the list, just like above.</li>
+        <li>In the bar at the bottom, pick your app and press <b>Save</b>. The file is saved next to your video.</li>
+        <li><b>Premiere Pro</b>: File → Import, pick the <b>.xml</b> file. <b>Final Cut Pro</b>: File → Import → XML, pick the <b>.fcpxml</b> file. <b>Other apps</b>: import the <b>.edl</b> file.</li>
+      </ol>
+      <p>The cut opens on one video track. Brown parts have a marker with the reason (and an orange label in Premiere). Overlapping A/B cuts and Voice Isolation only work in DaVinci Resolve.</p>
+
+      <h3>Hindi letters or Hinglish?</h3>
+      <p>For Hindi videos, the switch above the list shows the words in <b>हिंदी</b> letters, in <b>Hinglish</b> (Hindi in English letters, like a chat), or as an <b>English</b> translation. ScriptCutter finds retakes through the English translation first, then writes the Hindi words in the background. The switch appears when they are ready.</p>
+
+      <h3>Transcript of the final cut</h3>
+      <p>Press <b>Transcript</b> in the bottom bar to read or copy what is said in your finished cut, in the letters you picked. <b>Save</b> creates a text file, subtitles (<b>.srt</b>, works on YouTube and in every editor) and a data file for automation.</p>
+
+      <h3>The steps at the top</h3>
+      <p>Each step of the work shows at the top of the list: <b>✓</b> is done, <b>⚑</b> means it needs your eyes (click it to see those parts). More steps, like captions and B-roll images, will appear here as ScriptCutter grows.</p>
 
       <h3>Free or Studio version of Resolve?</h3>
       <ul>
@@ -267,6 +291,24 @@
 
       <h3>Still stuck?</h3>
       <p>Email <a href="mailto:dassuvam2005@gmail.com">dassuvam2005@gmail.com</a> and tell us what happened. A screenshot helps.</p>
+    </div>
+  </dialog>
+
+  <dialog class="help" id="transcript" aria-labelledby="transcriptTitle">
+    <div class="help-head">
+      <h2 id="transcriptTitle">Transcript of the final cut</h2>
+      <button class="icon-button" id="transcriptClose" title="Close (Esc)">✕</button>
+    </div>
+    <div class="help-body">
+      <div class="toolbar">
+        <div class="segmented compact" id="transcriptView"></div>
+        <div class="toolbar-group">
+          <button class="button button-small" id="transcriptCopy">Copy text</button>
+          <button class="button button-small button-primary" id="transcriptSave">Save .txt + subtitles</button>
+        </div>
+      </div>
+      <div class="hint" id="transcriptNote"></div>
+      <div class="transcript-text" id="transcriptText"></div>
     </div>
   </dialog>
 

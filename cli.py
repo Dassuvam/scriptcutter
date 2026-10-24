@@ -3,7 +3,9 @@
 ScriptCutter on the command line.
 
   python3 cli.py analyze --video raw.mp4                  print the decisions
-  python3 cli.py analyze --video raw.mp4 --edl cut.edl    also write an EDL (File > Import > Timeline)
+  python3 cli.py analyze --video raw.mp4 --xml cut.xml    also write a Premiere Pro XML
+  python3 cli.py analyze --video raw.mp4 --srt cut.srt --view hinglish
+                                                          subtitles of the final cut in Hinglish
   python3 cli.py resolve                                  cut the open Resolve timeline (video track 1)
   python3 cli.py resolve --llm gemini --api-key KEY       with an AI second opinion
 """
@@ -15,9 +17,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from cutter import pipeline, resolve_bridge  # noqa: E402
-from cutter.export import export_edl, export_report  # noqa: E402
+from cutter import exporters, resolve_bridge  # noqa: E402
 from cutter.llm import PROVIDERS  # noqa: E402
+from cutter.project import Project  # noqa: E402
 
 TAGS = {"keep": "KEEP  ", "review": "REVIEW", "remove": "CUT   "}
 
@@ -49,8 +51,14 @@ def parse_args():
     ap.add_argument("--checkerboard", action="store_true", help="alternate clips on V1/V2 with a small overlap")
     ap.add_argument("--overlap-frames", type=int, default=3)
     ap.add_argument("--voice-isolation", action="store_true", help="Resolve Studio only")
+    ap.add_argument("--xml", help="write a Premiere Pro XML (FCP7 XML) here")
+    ap.add_argument("--fcpxml", help="write a Final Cut Pro FCPXML here")
     ap.add_argument("--edl", help="write an EDL here")
-    ap.add_argument("--report", help="write a JSON report here")
+    ap.add_argument("--srt", help="write subtitles of the final cut here")
+    ap.add_argument("--transcript", help="write the final cut's transcript (.txt) here")
+    ap.add_argument("--report", help="write the edit document (.json) here")
+    ap.add_argument("--view", default="original", choices=["original", "hinglish", "english"],
+                    help="transcript text: spoken language, Hinglish, or English translation")
     ap.add_argument("--no-cache", action="store_true")
     ap.add_argument("-q", "--quiet", action="store_true", help="only print the summary")
     return ap.parse_args()
@@ -65,27 +73,20 @@ def main():
         settings.update(llm_provider=args.llm, llm_model=args.llm_model or "", llm_base_url=args.llm_url or "",
                         llm_api_key=args.api_key or os.environ.get(f"{args.llm.upper()}_API_KEY", ""))
 
-    context = {}
-    if args.command == "analyze":
-        if not args.video:
-            sys.exit("--video is required for analyze")
-        sources = [{"path": os.path.abspath(args.video), "fps": 0.0, "start_sec": 0.0, "end_sec": None}]
-        title = os.path.splitext(os.path.basename(args.video))[0]
-    else:
-        context, sources = resolve_bridge.timeline_sources(args.track)
-        if not sources:
-            sys.exit("No clips with media on that video track of the open timeline.")
-        title = context.get("timeline") or "Timeline"
-
-    analyses = {}
-    for src in sources:
-        if src["path"] not in analyses:
-            analyses[src["path"]] = pipeline.analyze_file(src["path"], settings, use_cache=not args.no_cache)
-        src["fps"] = src.get("fps") or analyses[src["path"]]["info"]["fps"] or 25.0
-    result = pipeline.plan_for_sources(sources, analyses, settings)
+    if args.command == "analyze" and not args.video:
+        sys.exit("--video is required for analyze")
+    project = Project("file" if args.command == "analyze" else "resolve", args.video or "", args.track, settings,
+                      use_cache=not args.no_cache)
+    outputs = {"premiere": args.xml, "fcp": args.fcpxml, "edl": args.edl, "srt": args.srt, "txt": args.transcript,
+               "json": args.report}
+    needs_script = any(outputs[k] for k in ("srt", "txt", "json")) or args.view != "original"
+    project.run(only=("cut", "script") if needs_script else ("cut",))
+    if project.state == "error":
+        sys.exit(project.error)
+    result = project.result
 
     if not args.quiet:
-        for a in analyses.values():
+        for a in project.analyses.values():
             print(f"\n== {a['name']} ({a['language']}{', via English' if a['translated'] else ''}, {a['model']})")
             for d in a["decisions"]:
                 if d["kind"] == "phrase" or d["action"] != "keep":
@@ -95,16 +96,13 @@ def main():
     print(f"\n{st['source_seconds'] / 60:.1f} min -> {st['kept_seconds'] / 60:.1f} min in {st['clips']} clips, "
           f"{st['removed_takes']} takes removed, {st['review_clips']} brown clips to review")
 
-    if args.edl:
-        tl_fps = float(context.get("timeline_fps") or 24.0)
-        export_edl(result["plan"], args.edl, title, tl_fps,
-                   {p: a["info"]["start_timecode"] for p, a in analyses.items()})
-        print(f"EDL written: {args.edl}")
-    if args.report:
-        export_report(result, analyses, args.report)
-        print(f"Report written: {args.report}")
+    edit = project.edit()
+    for fmt, path in outputs.items():
+        if path:
+            exporters.FORMATS[fmt]["write"](edit, path, args.view)
+            print(f"{exporters.FORMATS[fmt]['label']} written: {path}")
     if args.command == "resolve":
-        res = resolve_bridge.build(result["plan"], f"{title} - AI Cut", checkerboard=args.checkerboard,
+        res = resolve_bridge.build(result["plan"], edit["name"], checkerboard=args.checkerboard,
                                    overlap_frames=args.overlap_frames, voice_isolation=args.voice_isolation)
         if res.get("pending"):
             print(res["message"])
