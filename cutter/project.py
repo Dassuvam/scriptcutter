@@ -15,6 +15,7 @@ transcript) reads the edit document from Project.edit().
 """
 from __future__ import annotations
 
+import copy
 import os
 import traceback
 import uuid
@@ -135,6 +136,19 @@ class WordsStep(Step):
 STEPS = [CutStep, WordsStep]
 
 
+def _words_in(words: list, start: float, end: float, starts: list = None) -> list:
+    """The timed words whose middle lies inside start..end (starts: the words' start times, if known)."""
+    starts = starts if starts is not None else [w["start"] for w in words]
+    picked = []
+    for w in words[max(0, bisect_left(starts, start - 5.0)):]:
+        mid = (w["start"] + w["end"]) / 2
+        if mid >= end:
+            break
+        if mid >= start:
+            picked.append(w)
+    return picked
+
+
 class Project:
     """One analysis: a Resolve timeline or a single file, plus the creator's choices."""
 
@@ -152,6 +166,7 @@ class Project:
         self.approved = False  # the creator exported the cut, so the cut step's flag is cleared
         self.builds, self.pending_plan, self.recorded, self.outputs = [], None, {}, []
         self.render = {"state": "idle"}  # the MP4 being made: state, progress, file, error
+        self.history = []  # the creator's edits (choices, splits), newest last: what undo takes back
 
     def step(self, step_id: str) -> Step:
         return next(s for s in self.steps if s.id == step_id)
@@ -205,6 +220,7 @@ class Project:
         analysis = self.analyses.get(path)
         if not analysis:
             raise RuntimeError("unknown source")
+        self._remember([path])
         for d in analysis["decisions"]:
             if d["id"] == decision_id:
                 d["user_action"] = action if action in ACTIONS else None
@@ -212,10 +228,57 @@ class Project:
 
     def bulk(self, from_action: str, action):
         """E.g. bulk("review", "remove"): every brown line at once (lines set by hand are left alone)."""
+        self._remember(list(self.analyses))
         for d in self.decisions():
             if d.get("action") == from_action and not d.get("user_action"):
                 d["user_action"] = action if action in ACTIONS else None
         self.replan()
+
+    def split(self, path: str, decision_id: str, word: int) -> str:
+        """
+        Split a line in two before its word number `word` (counted in the review's words of
+        the line), like pressing Enter in a text, so each half can be kept or cut on its own.
+        Both halves start with the line's choice; the split point stays exactly where it was
+        put (cuts.py does not pad or move it). Returns the second half's id.
+        """
+        analysis = self.analyses.get(path)
+        d = next((x for x in analysis["decisions"] if x["id"] == decision_id), None) if analysis else None
+        if not d:
+            raise RuntimeError("This line is no longer in the list.")
+        words = _words_in(analysis.get("_words") or [], d["start"], d["end"])
+        if not 0 < word < len(words):
+            raise RuntimeError("Put the cursor between two words of the line to split it there.")
+        before, after = words[word - 1], words[word]
+        at = (before["end"] + after["start"]) / 2 if before["end"] <= after["start"] else after["start"]
+        at = min(max(at, d["start"] + 0.02), d["end"] - 0.02)
+        self._remember([path])
+        first = dict(d, id=f"{d['id']}-1", end=at, text=" ".join(w["w"] for w in words[:word]), fixed_end=True)
+        second = dict(d, id=f"{d['id']}-2", start=at, text=" ".join(w["w"] for w in words[word:]), fixed_start=True)
+        decisions = analysis["decisions"]
+        i = decisions.index(d)
+        decisions[i:i + 1] = [first, second]
+        for x in decisions:  # lines inside it and links to it follow the half they belong to
+            if x.get("parent") == d["id"]:
+                x["parent"] = first["id"] if (x["start"] + x["end"]) / 2 < at else second["id"]
+            if x.get("ref") == d["id"]:
+                x["ref"] = first["id"]
+        analysis["_texts_for"] = None
+        self.replan()
+        return second["id"]
+
+    def undo(self):
+        """Take back the creator's last edit: a Keep / Review / Cut choice, a bulk change or a split."""
+        if not self.history:
+            raise RuntimeError("Nothing to undo.")
+        for path, decisions in self.history.pop().items():
+            self.analyses[path]["decisions"] = decisions
+            self.analyses[path]["_texts_for"] = None
+        self.replan()
+
+    def _remember(self, files: list):
+        """Save the lines of these files as they are now, for undo (the last 100 edits)."""
+        self.history.append({p: copy.deepcopy(self.analyses[p]["decisions"]) for p in files if p in self.analyses})
+        del self.history[:-100]
 
     def change_settings(self, values: dict):
         """Policy and padding from the review page; anything else needs a new analysis."""
@@ -294,15 +357,12 @@ class Project:
             starts = [w["start"] for w in words]
             out = {}
             for d in analysis["decisions"]:
-                picked = []
-                for w in words[max(0, bisect_left(starts, d["start"] - 5.0)):]:
-                    mid = (w["start"] + w["end"]) / 2
-                    if mid >= d["end"]:
-                        break
-                    if mid >= d["start"]:
-                        picked.append(w["w"])
-                text = " ".join(picked) if analysis["translated"] else d.get("text", "")
-                out[d["id"]] = {"orig": text, "hinglish": to_hinglish(text)}
+                picked = _words_in(words, d["start"], d["end"], starts)
+                text = " ".join(w["w"] for w in picked) if analysis["translated"] else d.get("text", "")
+                out[d["id"]] = {"orig": text, "hinglish": to_hinglish(text),
+                                # each word with its times: the review's text cursor splits a line between two
+                                "words": [[round(w["start"], 3), round(w["end"], 3), w["w"], to_hinglish(w["w"])]
+                                          for w in picked]}
             analysis["_texts"], analysis["_texts_for"] = out, words
         return analysis["_texts"]
 

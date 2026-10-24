@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.1
+- **Split a line where you want, like in a text editor:** in the review, click a word to put a text cursor there, then press **Enter** (or *Split at the cursor*). The line becomes two lines, and each can be kept, sent to review or cut on its own, so a retake glued to a good sentence ("So that's it for this video, so that's it for this video and if you like…") can be cut exactly at the word. The arrow keys move the cursor, Esc hides it.
+- **Undo:** **⌘Z** (Mac) or **Ctrl+Z** (Windows) takes back the last split or Keep / Review / Cut choice, one step at a time.
+
 ## 3.2.0
 
 **Notes**

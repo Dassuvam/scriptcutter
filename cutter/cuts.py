@@ -52,6 +52,8 @@ def build_clips(decisions: list, regions: list, env, settings: dict = None,
         if d["end"] <= lo or d["start"] >= hi:
             continue
         span = (max(lo, d["start"]), min(hi, d["end"]))
+        split_edges = (d.get("fixed_start", False), d.get("fixed_end", False))  # where the creator split the line
+        first_unit = len(units)
         if d["action"] == "remove":
             removed.append({"start": span[0], "end": span[1], "id": d["id"], "reason": d["reason"],
                             "text": d.get("text", ""), "confidence": d["confidence"]})
@@ -88,6 +90,10 @@ def build_clips(decisions: list, regions: list, env, settings: dict = None,
             if cur < b:
                 units.append({"start": cur, "end": b, "status": "keep", "ids": [d["id"]], "reasons": [],
                               "text": d.get("text", ""), "fixed": (cur > a, False)})
+        for u in units[first_unit:]:  # a line split by the creator is cut exactly where they split it
+            fixed_start, fixed_end = u.get("fixed", (False, False))
+            u["fixed"] = (fixed_start or (split_edges[0] and u["start"] <= span[0]),
+                          fixed_end or (split_edges[1] and u["end"] >= span[1]))
 
     units = [u for u in units if u["end"] - u["start"] > 0.04]
     units.sort(key=lambda u: u["start"])

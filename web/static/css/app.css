@@ -247,6 +247,19 @@ kbd { font: 11px var(--font-mono); border: 1px solid var(--rule); border-radius:
 .row-time { font: 12px var(--font-mono); color: var(--text-muted); padding-top: 4px; }
 .row-text { font: 16px/1.4 var(--font-display); word-break: break-word; }
 .row-text i { color: var(--text-faint); }
+/* the text cursor: click a word, Enter (or the Split button) splits the line there */
+.row-text.is-splittable .w { position: relative; cursor: text; }
+.row-text .w.caret-before::before, .row-text .w.caret-after::after {
+  content: ""; position: absolute; top: 0.12em; bottom: 0.08em; width: 2px; background: var(--accent);
+  animation: caret-blink 1s steps(1) infinite;
+}
+.row-text .w.caret-before::before { left: -3px; }
+.row-text .w.caret-after::after { right: -3px; }
+@keyframes caret-blink { 50% { opacity: 0; } }
+.split-btn {
+  display: block; margin: 6px 0 2px; font: 600 var(--text-xs)/1 var(--font-body); padding: 5px 10px;
+  border-radius: 999px; border: 0; background: var(--accent); color: var(--on-accent); cursor: pointer;
+}
 .row-why { font-size: var(--text-sm); color: var(--text-muted); margin-top: 4px; }
 .row-why a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 .row-why .by-you { color: var(--accent); }

@@ -496,6 +496,65 @@ class ScriptModeTests(unittest.TestCase):
         self.assertEqual(len(scriptmatch.split_lines("Hello there. How are you?\nठीक है। चलो")), 4)
 
 
+class SplitTests(unittest.TestCase):
+    """The review's text cursor: split a line between two words, cut one half, undo."""
+
+    def setUp(self):
+        words = [{"w": w, "start": s, "end": s + 0.3} for w, s in
+                 (("So", 1.0), ("that's", 1.4), ("it,", 1.8), ("so", 2.6), ("that's", 3.0), ("it", 3.4))]
+        self.p = Project("file", "/v.mov")
+        self.p.replan = lambda: None  # no audio here: the plan itself is tested in test_split_point_stays_put
+        self.p.analyses = {"/v.mov": {"translated": False, "_words": words, "decisions": [
+            {"id": "p0001", "start": 1.0, "end": 3.7, "kind": "phrase", "text": "So that's it, so that's it",
+             "action": "review", "confidence": 0.6, "reason": "Said again"},
+            {"id": "p0001r0", "start": 1.0, "end": 2.1, "kind": "restart", "parent": "p0001", "text": "So that's it,",
+             "action": "remove", "confidence": 0.84, "reason": "Started this line"},
+            {"id": "p0002", "start": 5.0, "end": 6.0, "kind": "phrase", "text": "later", "ref": "p0001",
+             "action": "remove", "confidence": 0.9, "reason": "Said again"}]}}
+
+    def decisions(self):
+        return self.p.analyses["/v.mov"]["decisions"]
+
+    def test_split_between_two_words(self):
+        second = self.p.split("/v.mov", "p0001", 3)
+        first, rest = self.decisions()[0], self.decisions()[1]
+        self.assertEqual((first["id"], rest["id"], second), ("p0001-1", "p0001-2", "p0001-2"))
+        self.assertEqual((first["text"], rest["text"]), ("So that's it,", "so that's it"))
+        self.assertAlmostEqual(first["end"], 2.35)  # the middle of the pause between "it," and "so"
+        self.assertEqual(rest["start"], first["end"])
+        self.assertEqual(self.decisions()[2]["parent"], "p0001-1")  # the restart inside follows its half
+        self.assertEqual(self.decisions()[3]["ref"], "p0001-1")
+        self.assertEqual([len(t["words"]) for t in (self.p._texts(self.p.analyses["/v.mov"])[i]
+                                                    for i in ("p0001-1", "p0001-2"))], [3, 3])
+
+    def test_undo_takes_back_choices_and_splits(self):
+        self.p.split("/v.mov", "p0001", 3)
+        self.p.set_decision("/v.mov", "p0001-1", "remove")
+        self.p.undo()
+        self.assertIsNone(self.decisions()[0].get("user_action"))
+        self.p.undo()
+        self.assertEqual([d["id"] for d in self.decisions()], ["p0001", "p0001r0", "p0002"])
+        with self.assertRaises(RuntimeError):
+            self.p.undo()
+
+    def test_cursor_at_the_edge_does_not_split(self):
+        for word in (0, 6):
+            with self.assertRaises(RuntimeError):
+                self.p.split("/v.mov", "p0001", word)
+
+    def test_split_point_stays_put(self):
+        speech = [(1.0, 3.7)]
+        decs = [{"id": "p1-1", "start": 1.0, "end": 2.35, "kind": "phrase", "action": "remove", "reason": "retake",
+                 "text": "So that's it,", "confidence": 0.9, "fixed_end": True},
+                {"id": "p1-2", "start": 2.35, "end": 3.7, "kind": "phrase", "action": "keep", "reason": "",
+                 "text": "so that's it", "confidence": 0, "fixed_start": True}]
+        clips = cuts.build_clips(decs, speech, flat_env(5, speech))["clips"]
+        self.assertEqual([c["start"] for c in clips], [2.35])
+        decs[0]["action"] = "review"  # a brown half next to a kept half: the edge between them stays too
+        clips = cuts.build_clips(decs, speech, flat_env(5, speech))["clips"]
+        self.assertEqual([(c["status"], c["end"]) for c in clips][0], ("review", 2.35))
+
+
 class ProjectTests(unittest.TestCase):
     def test_missing_file_stops_at_the_cut_step(self):
         p = Project("file", "/no/such/video.mov")

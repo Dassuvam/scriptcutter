@@ -457,16 +457,25 @@ function renderFiles(R) {
     const view = currentView(R);
     f.decisions
       .filter((d) => state.filter === "all" || d.action === state.filter)
-      .forEach((d) => rows.appendChild(renderRow(d, f.path, byId, view)));
+      .forEach((d) => rows.appendChild(renderRow(d, f, byId, view)));
     if (!rows.children.length) {
       const why = f.silent || f.speechless ? "No speech here, so nothing was cut." : "Nothing in this filter.";
       rows.innerHTML = `<div class="empty">${why}</div>`;
     }
     holder.appendChild(rows);
   });
+  drawCaret();
 }
 
-function renderRow(d, path, byId, view) {
+// the line's words with their times, for the text cursor (the English translation of another
+// language has no word times, so it can't be split)
+function rowWords(d, f, view) {
+  if (!d.words || d.words.length < 2 || (f.translated && view === "english")) return null;
+  return d.words.map((w) => (view === "hinglish" ? w[3] : w[2]));
+}
+
+function renderRow(d, f, byId, view) {
+  const path = f.path;
   const row = document.createElement("div");
   row.className = `row ${d.action}${state.selected === d.id ? " is-selected" : ""}`;
   row.dataset.id = d.id;
@@ -481,10 +490,13 @@ function renderRow(d, path, byId, view) {
     ? `<div class="row-why">${escapeHtml(d.reason)}${d.reason && conf ? " · " : ""}${conf}${ref}${mine}</div>` : "";
   const choice = ["keep", "review", "remove"].map((a) =>
     `<button class="${a}${d.action === a ? " is-on" : ""}" data-action="${a}">${{ keep: "Keep", review: "Review", remove: "Cut" }[a]}</button>`).join("");
+  const words = rowWords(d, f, view);
+  const text = words ? words.map((w, i) => `<span class="w" data-i="${i}">${escapeHtml(w)}</span>`).join(" ")
+    : rowText(d, view) ? escapeHtml(rowText(d, view)) : "<i>(no words)</i>";
   row.innerHTML = `
     <button class="play" data-play="${d.id}" title="Play">▶</button>
     <div class="row-time">${clock(d.start)}</div>
-    <div><div class="row-text">${tag}${rowText(d, view) ? escapeHtml(rowText(d, view)) : "<i>(no words)</i>"}</div>${why}</div>
+    <div><div class="row-text${words ? " is-splittable" : ""}">${tag}${text}</div>${why}</div>
     <div class="choice">${choice}</div>`;
   return row;
 }
@@ -532,11 +544,18 @@ $("files").addEventListener("click", (e) => {
   select(row);
   const p = e.target.closest("[data-play]");
   if (p) return play(row.dataset.path, p.dataset.play);
+  if (e.target.closest(".split-btn")) return splitAtCaret();
+  const w = e.target.closest(".row-text .w");
+  if (w) return placeCaret(row, w, e.clientX);
   const b = e.target.closest("[data-action]");
   if (b) setDecision(row.dataset.path, row.dataset.id, b.dataset.action);
 });
 
 function select(row) {
+  if (state.caret && (state.caret.id !== row.dataset.id || state.caret.path !== row.dataset.path)) {
+    state.caret = null;
+    drawCaret();
+  }
   state.selected = row.dataset.id;
   document.querySelectorAll(".row.is-selected").forEach((r) => r.classList.remove("is-selected"));
   row.classList.add("is-selected");
@@ -545,6 +564,17 @@ function select(row) {
 document.addEventListener("keydown", (e) => {
   if (!state.review || $("help").open || $("transcript").open
     || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    return undo();
+  }
+  if (state.caret && ["Enter", "Escape", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+    e.preventDefault();
+    if (e.key === "Enter") return splitAtCaret();
+    if (e.key === "Escape") state.caret = null;
+    else state.caret.at += e.key === "ArrowLeft" ? -1 : 1;
+    return drawCaret();
+  }
   const rows = [...document.querySelectorAll(".row")];
   if (!rows.length) return;
   let i = rows.findIndex((r) => r.dataset.id === state.selected);
@@ -561,6 +591,67 @@ document.addEventListener("keydown", (e) => {
     setDecision(current.dataset.path, current.dataset.id, { 1: "keep", 2: "review", 3: "remove", 0: "auto" }[e.key]);
   }
 });
+
+// ---------------------------------------------------------------- text cursor: split a line, undo
+// Click a word to put a text cursor before it (or after it, on its right half). Enter or the
+// Split button breaks the line in two there, like Enter in a text; each half then gets its own
+// Keep / Review / Cut. Cmd+Z (Mac) / Ctrl+Z (Windows) takes back the last split or choice.
+const UNDO_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘Z" : "Ctrl+Z";
+
+function placeCaret(row, span, x) {
+  const box = span.getBoundingClientRect();
+  state.caret = { path: row.dataset.path, id: row.dataset.id, at: +span.dataset.i + (x > box.left + box.width / 2 ? 1 : 0) };
+  drawCaret();
+}
+
+function drawCaret() {
+  document.querySelectorAll(".row-text .w.caret-before, .row-text .w.caret-after")
+    .forEach((s) => s.classList.remove("caret-before", "caret-after"));
+  document.querySelectorAll(".split-btn").forEach((b) => b.remove());
+  const c = state.caret;
+  if (!c) return;
+  const row = [...document.querySelectorAll(".row")].find((r) => r.dataset.id === c.id && r.dataset.path === c.path);
+  const spans = row ? row.querySelectorAll(".row-text .w") : [];
+  if (!spans.length) { state.caret = null; return; }
+  c.at = Math.max(0, Math.min(spans.length, c.at));
+  const atEnd = c.at === spans.length;
+  const span = spans[atEnd ? c.at - 1 : c.at];
+  span.classList.add(atEnd ? "caret-after" : "caret-before");
+  if (c.at > 0 && !atEnd) {  // the button sits under the text, so it never hides a word
+    const b = document.createElement("button");
+    b.className = "split-btn";
+    b.title = `${UNDO_KEY} undoes it`;
+    b.textContent = "Split at the cursor ↵";
+    row.querySelector(".row-text").after(b);
+  }
+}
+
+async function splitAtCaret() {
+  const c = state.caret;
+  const d = c && findDecision(c.path, c.id);
+  if (!d) return;
+  if (c.at <= 0 || c.at >= (d.words || []).length) {
+    toast("Put the cursor between two words to split the line there.");
+    return;
+  }
+  try {
+    state.review = await api(`/api/job/${state.job}/split`, { path: c.path, id: c.id, word: c.at });
+    state.caret = null;
+    state.selected = `${c.id}-2`;
+    render();
+    toast(`Line split: now keep or cut each part. ${UNDO_KEY} undoes it.`);
+  } catch (e) { toast("Could not split: " + e.message, true); }
+}
+
+async function undo() {
+  if (!state.job || !state.review) return;
+  try {
+    state.review = await api(`/api/job/${state.job}/undo`, {});
+    state.caret = null;
+    render();
+    toast("Undone.");
+  } catch (e) { toast(e.message, true); }
+}
 
 // ---------------------------------------------------------------- playback
 function play(path, id) {

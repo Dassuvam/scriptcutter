@@ -252,7 +252,8 @@ class Handler(BaseHTTPRequestHandler):
                 job = self._job(parts[2])
                 if not job or job.state != "done":
                     return self._json({"error": "This analysis is no longer open. Press Analyse again."}, 409)
-                handler = {"decision": self.set_decision, "bulk": self.bulk_decision, "settings": self.change_settings,
+                handler = {"decision": self.set_decision, "bulk": self.bulk_decision, "split": self.split_line,
+                           "undo": self.undo, "settings": self.change_settings,
                            "build": self.build, "export": self.export, "reveal": self.reveal}.get(parts[3])
                 if handler:
                     return self._json(handler(job, body))
@@ -300,6 +301,17 @@ class Handler(BaseHTTPRequestHandler):
     @staticmethod
     def bulk_decision(job: Project, body: dict) -> dict:
         job.bulk(body.get("from"), body.get("action"))
+        return job.review_payload()
+
+    @staticmethod
+    def split_line(job: Project, body: dict) -> dict:
+        """{"path", "id", "word"}: split the line before that word (the review's text cursor)."""
+        job.split(body.get("path"), body.get("id"), int(body.get("word") or 0))
+        return job.review_payload()
+
+    @staticmethod
+    def undo(job: Project, body: dict) -> dict:
+        job.undo()
         return job.review_payload()
 
     @staticmethod
