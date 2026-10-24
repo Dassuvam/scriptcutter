@@ -7,6 +7,7 @@
 - **Hindi, Hinglish, English** and the other languages Whisper understands. Read Hindi videos in Hindi letters or in Hinglish with one switch.
 - **Works with DaVinci Resolve Free and Studio**, and saves files for **Premiere Pro**, **Final Cut Pro** and other editors.
 - **Transcript of the final cut**, ready to copy, plus subtitles (.srt).
+- **Have a script? Paste it.** ScriptCutter keeps the last good take of every line of your script and cuts the rest, which is more accurate than working from the audio alone.
 - **Learns your taste.** Your Keep / Cut corrections improve the next video.
 
 ---
@@ -56,6 +57,8 @@ Your original timeline is never changed. Click **Help** (or press `?`) inside Sc
 4. **Premiere Pro:** File → Import, pick the `.xml` file. **Final Cut Pro:** File → Import → XML, pick the `.fcpxml` file. **Other apps:** import the `.edl` file.
 
 The cut arrives on one video track; brown parts have a marker with the reason. Overlapping A/B cuts and Voice Isolation are Resolve-only.
+
+**Script (optional):** if you recorded from a script, paste it in **Step 4** before pressing Analyse (Hindi, Hinglish or English). ScriptCutter keeps your last good take of every line and cuts the other takes and anything not in the script; longer unscripted parts stay brown.
 
 **Transcript:** press **Transcript** in the bottom bar to read and copy what is said in the final cut, or save it as text and subtitles (`.srt`). For Hindi videos, the **हिंदी / Hinglish / English** switch above the list picks the letters.
 

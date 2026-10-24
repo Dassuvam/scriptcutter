@@ -1,5 +1,8 @@
 # Changelog
 
+## 3.2.0 (not released yet)
+- **Script mode:** paste the script you recorded from (Hindi letters, Hinglish or English, mixed is fine) in Step 4. ScriptCutter finds every line in the recording, keeps the last good take of each line, and cuts the other takes, unfinished takes and short off-script bits. Longer new parts that are not in the script stay brown, in case they are a good ad-lib. The review shows how many lines were found and which were not. Command line: `--script script.txt`.
+
 ## 3.1.0
 - **More accurate on Hindi and Hinglish:** ScriptCutter now also reads the timed words in the spoken language and finds restarts inside Whisper's long sentences ("mere ko jo sabse badi… aur mere ko jo poochh sabse accha lagega"), including the end of a line that the next line starts again and short scraps before a restart. Sentences that only start the same way ("agar aapko ye video pasand aaya…" / "…pasand nahi aaya…") are left alone. On a real 2.6-minute Hindi recording, agreement with a hand edit rose from 66% to 75% of the time (77% of words handled safely), with no wrongly cut lines.
 - Fixed: a brown part inside a sentence no longer turns the whole sentence brown.

@@ -161,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
                     view = q.get("view", "original")
                     edit = job.edit()
                     return self._json({"text": plain_text(edit, view), "seconds": edit["duration"] / edit["fps"],
-                                       "pending": job.step("script").state in ("waiting", "running")})
+                                       "pending": job.step("words").state in ("waiting", "running")})
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             traceback.print_exc()

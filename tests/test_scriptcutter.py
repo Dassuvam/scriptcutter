@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(ROOT, "tests"))
 from cutter import analyze as an  # noqa: E402
 import xml.etree.ElementTree as ET  # noqa: E402
 
-from cutter import cuts, exporters, llm, paths, resolve_bridge, restarts, text, translit  # noqa: E402
+from cutter import cuts, exporters, llm, paths, resolve_bridge, restarts, scriptmatch, text, translit  # noqa: E402
 from cutter import edit as edit_doc  # noqa: E402
 from cutter.exporters.transcript import _srt_time, plain_text  # noqa: E402
 from cutter.project import Project  # noqa: E402
@@ -307,6 +307,39 @@ class RestartTests(unittest.TestCase):
     def test_hindi_and_english_spelling_match(self):
         words = spoken("content creation वीडियो editing या AI", 0) + spoken("content creation video editing AI for creators", 4)
         self.assertEqual(len(restarts.find(words)), 1)
+
+
+class ScriptModeTests(unittest.TestCase):
+    SCRIPT = """नमस्ते दोस्तों, आज हम वीडियो बनाना सीखेंगे।
+सबसे पहले कैमरा सही जगह पर रखिए।
+फिर लाइट ठीक कीजिए।
+अंत में सब्सक्राइब ज़रूर करें।"""
+    SAID = [(0, "नमस्ते दोस्तों आज हम वीडियो बनाना सीखेंगे"), (5, "सबसे पहले कैमरा"), (8, "let me do that again"),
+            (10, "सबसे पहले कैमरा सही जगह पर रखिए"), (14, "सबसे पहले camera को सही जगह पर रखिए"),
+            (19, "and by the way this camera is my favourite one from last year"), (24, "phir light theek kijiye")]
+
+    def test_keeps_last_take_of_each_line(self):
+        words, phrases = [], []
+        for i, (t0, said) in enumerate(self.SAID):
+            ws = spoken(said, t0)
+            words += ws
+            phrases.append({"id": f"p{i + 1:04d}", "start": ws[0]["start"], "end": ws[-1]["end"], "text": said,
+                            "p": 0.9, "flags": []})
+        a = {"path": "/x.mov", "language": "hi", "translated": False, "info": {"duration": 30.0},
+             "phrases": phrases, "decisions": [], "_words": words}
+        summary = scriptmatch.apply([{"path": "/x.mov", "start_sec": 0, "end_sec": None}], {"/x.mov": a}, self.SCRIPT)
+        self.assertEqual((summary["found"], [m["n"] for m in summary["missing"]]), (3, [4]))
+        conf = {d["id"]: d["confidence"] for d in a["decisions"]}
+        self.assertEqual(conf["p0001"], 0.0)                    # line 1
+        self.assertGreaterEqual(conf["p0002"], 0.75)            # unfinished take of line 2
+        self.assertGreaterEqual(conf["p0003"], 0.75)            # "let me do that again"
+        self.assertGreaterEqual(conf["p0004"], 0.75)            # earlier take of line 2
+        self.assertEqual(conf["p0005"], 0.0)                    # last take of line 2, said a little differently
+        self.assertTrue(0.45 <= conf["p0006"] < 0.75)           # unscripted aside: brown
+        self.assertEqual(conf["p0007"], 0.0)                    # line 3 said in Hinglish
+
+    def test_lines_split_at_sentence_ends(self):
+        self.assertEqual(len(scriptmatch.split_lines("Hello there. How are you?\nठीक है। चलो")), 4)
 
 
 class ProjectTests(unittest.TestCase):

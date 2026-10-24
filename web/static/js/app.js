@@ -46,7 +46,7 @@ const FOOTAGE_HINTS = {
   screen: "Silent parts where the screen changes stay as brown clips, so on-screen action is never lost.",
 };
 const SETTINGS_FIELDS = ["track", "filePath", "language", "textMode", "model", "sensitivity", "maxPause", "headPad",
-  "tailPad", "topic", "llmUrl", "overlap"];
+  "tailPad", "topic", "llmUrl", "overlap", "script"];
 const SETTINGS_CHECKS = ["markers", "checkerboard", "voiceIsolation"];
 
 // ---------------------------------------------------------------- helpers
@@ -239,7 +239,7 @@ function collectSettings() {
     model: $("model").value, sensitivity: +$("sensitivity").value, max_pause: +$("maxPause").value,
     head_pad: +$("headPad").value, tail_pad: +$("tailPad").value,
     llm_provider: p, llm_model: p ? $("llmModel").value : "", llm_api_key: p ? $("apiKey").value : "",
-    llm_base_url: $("llmUrl").value, topic: $("topic").value,
+    llm_base_url: $("llmUrl").value, topic: $("topic").value, script: $("script").value,
   };
 }
 
@@ -383,6 +383,16 @@ function renderStats(R) {
     <div class="stat"><b>${st.removed_takes}</b><span>takes and noises cut</span></div>
     <div class="stat is-review"><b>${st.review_clips}</b><span>brown clips (${duration(st.review_seconds)})</span></div>
     <div class="stat"><b>${st.clips}</b><span>clips on the new timeline</span></div>`;
+  const S = R.script || {};
+  if (S.lines) {
+    const p = document.createElement("div");
+    p.className = "learned";
+    const missing = (S.missing || []).slice(0, 3).map((m) => `line ${m.n} "${escapeHtml(m.text.slice(0, 50))}"`).join(", ");
+    p.innerHTML = `Script: <b>${S.found} of ${S.lines}</b> lines found in the recording`
+      + (S.weak ? ` · ${S.weak} unsure (brown)` : "")
+      + (missing ? ` · Not found: ${missing}${S.missing.length > 3 ? ` and ${S.missing.length - 3} more` : ""}` : "");
+    $("stats").appendChild(p);
+  }
   const learned = (R.learned || []).filter((x) => x.kept + x.cut > 0);
   if (learned.length) {
     const p = document.createElement("div");

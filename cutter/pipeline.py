@@ -43,6 +43,7 @@ DEFAULT_SETTINGS = {
     "use_vad": True,            # Silero voice detection when installed
     "learn": True,              # apply what was learned from your past choices
     "use_words": True,          # translated analysis: also read the spoken-language words (restarts, Hindi text)
+    "script": "",               # the creator's script: keep the last good take of every line (scriptmatch.py)
 }
 
 # one Whisper at a time: two large models at once can run a laptop out of memory

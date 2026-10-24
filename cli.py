@@ -44,6 +44,7 @@ def parse_args():
     ap.add_argument("--head-pad", type=float, default=0.10)
     ap.add_argument("--tail-pad", type=float, default=0.16)
     ap.add_argument("--topic", default="")
+    ap.add_argument("--script", help="text file with the script you recorded from (Hindi, Hinglish or English)")
     ap.add_argument("--llm", choices=sorted(PROVIDERS))
     ap.add_argument("--llm-model")
     ap.add_argument("--llm-url")
@@ -69,6 +70,9 @@ def main():
     settings = {"language": args.language, "text_mode": args.text, "model": args.model,
                 "sensitivity": args.sensitivity, "policy": args.policy, "footage": args.footage,
                 "max_pause": args.max_pause, "head_pad": args.head_pad, "tail_pad": args.tail_pad, "topic": args.topic}
+    if args.script:
+        with open(args.script, encoding="utf-8") as f:
+            settings["script"] = f.read()
     if args.llm:
         settings.update(llm_provider=args.llm, llm_model=args.llm_model or "", llm_base_url=args.llm_url or "",
                         llm_api_key=args.api_key or os.environ.get(f"{args.llm.upper()}_API_KEY", ""))
@@ -79,8 +83,8 @@ def main():
                       use_cache=not args.no_cache)
     outputs = {"premiere": args.xml, "fcp": args.fcpxml, "edl": args.edl, "srt": args.srt, "txt": args.transcript,
                "json": args.report}
-    needs_script = any(outputs[k] for k in ("srt", "txt", "json")) or args.view != "original"
-    project.run(only=("cut", "script") if needs_script else ("cut",))
+    needs_words = any(outputs[k] for k in ("srt", "txt", "json")) or args.view != "original"
+    project.run(only=("cut", "words") if needs_words else ("cut",))
     if project.state == "error":
         sys.exit(project.error)
     result = project.result

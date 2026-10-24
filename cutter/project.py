@@ -6,7 +6,8 @@ here depends on the web page, so the CLI or a future automation drives the
 same steps.
 
     cut      find retakes and long pauses      flag: brown parts to check
-    script   words in the spoken language      runs in the background
+             (with a pasted script: keep the last good take of every script line)
+    words    words in the spoken language      runs in the background when the cut did not read them
     (later)  captions, B-roll images, generated shots, music: one Step each
 
 All outputs (Resolve timeline, Premiere / Final Cut XML, EDL, transcript) read
@@ -20,7 +21,7 @@ import uuid
 from bisect import bisect_left
 
 from . import edit as edit_doc
-from . import learn, pipeline, resolve_bridge
+from . import learn, pipeline, resolve_bridge, scriptmatch
 from .analyze import POLICIES
 from .translit import has_devanagari, to_hinglish
 
@@ -77,6 +78,10 @@ class CutStep(Step):
             p.analyses[path] = pipeline.analyze_file(path, p.settings, p.rep, use_cache=p.use_cache)
         for s in p.sources:
             s["fps"] = s.get("fps") or p.analyses[s["path"]]["info"]["fps"] or 25.0
+        if p.settings.get("script", "").strip():
+            p.script = scriptmatch.apply(p.sources, p.analyses, p.settings["script"])
+            p.rep.log(f"Script: {p.script['found']} of {p.script['lines']} lines found in the recording"
+                      + (f", {p.script['weak']} unsure" if p.script.get("weak") else ""))
         p.replan()
         p.rep.file_index = p.rep.file_count
         st = p.result["stats"]
@@ -89,10 +94,11 @@ class CutStep(Step):
         return f"{n} to check" if n and not p.approved else ""
 
 
-class ScriptStep(Step):
-    """Words in the spoken language: Hindi script / Hinglish in the review, and the final transcript."""
+class WordsStep(Step):
+    """Words in the spoken language (Hindi letters / Hinglish in the review, the final transcript),
+    when the cut step did not already read them."""
 
-    id, title, background = "script", "Write the script", True
+    id, title, background = "words", "Read the words", True
 
     def run(self):
         p = self.project
@@ -103,10 +109,10 @@ class ScriptStep(Step):
         for i, a in enumerate(todo):
             pipeline.original_words(a, progress=lambda f, i=i: setattr(self, "progress", (i + f) / len(todo)),
                                     log=p.rep.log, use_cache=p.use_cache)
-        p.rep.log("Script ready")
+        p.rep.log("Words ready")
 
 
-STEPS = [CutStep, ScriptStep]
+STEPS = [CutStep, WordsStep]
 
 
 class Project:
@@ -121,6 +127,7 @@ class Project:
         self.rep = pipeline.Reporter()
         self.context, self.timeline_name = {}, ""
         self.sources, self.analyses, self.result = [], {}, None
+        self.script = {}  # summary of script mode: lines found / missing
         self.steps = [cls(self) for cls in STEPS]
         self.approved = False  # the creator sent the cut somewhere: the cut step's flag is cleared
         self.builds, self.pending_plan, self.recorded, self.outputs = [], None, {}, []
@@ -199,7 +206,8 @@ class Project:
             action = "remove" if c >= remove_at else ("review" if c >= review_at else "keep")
             return "review" if action == "remove" and d.get("llm_only") else action
 
-        fresh = [d for d in self.decisions() if d.get("user_action") and self.recorded.get(d["id"]) != d["user_action"]]
+        fresh = [d for d in self.decisions() if d.get("user_action") and not d.get("script")
+                 and self.recorded.get(d["id"]) != d["user_action"]]
         taught = learn.record(fresh, tool_action)
         self.recorded.update({d["id"]: d["user_action"] for d in fresh})
         return taught
@@ -250,7 +258,7 @@ class Project:
             texts = self._texts(a)
             decisions = []
             for d in a["decisions"]:
-                if d["kind"] in ("filler", "restart") and d["action"] == "keep" and not d.get("user_action"):
+                if d["kind"] in ("filler", "restart", "script") and d["action"] == "keep" and not d.get("user_action"):
                     continue
                 if not any(d["end"] > r0 and d["start"] < r1 for r0, r1 in ranges):
                     continue
@@ -269,4 +277,5 @@ class Project:
             files.append({"path": path, "name": a["name"], "language": a["language"], "translated": a["translated"],
                           "has_video": a["info"]["has_video"], "model": a["model"], "llm": a.get("llm"),
                           "views": views, "decisions": decisions})
-        return {"job": self.public(), "files": files, "timeline_name": self.timeline_name, "learned": learn.summary()}
+        return {"job": self.public(), "files": files, "timeline_name": self.timeline_name, "learned": learn.summary(),
+                "script": self.script}
