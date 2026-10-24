@@ -7,9 +7,14 @@ works in both the free and the Studio version:
   * Studio: the ScriptCutter app runs this file through Resolve's `fuscript`:
       fuscript -l lua scriptcutter.lua context <out.json>
       fuscript -l lua scriptcutter.lua build   <plan.lua> <result.json>
-  * Free: the two Workspace > Scripts menu entries load this file (they set
-    SCRIPTCUTTER_EMBEDDED) and call run() directly, because the free version
-    only allows scripts started from inside Resolve.
+  * Free: the Workspace > Scripts > ScriptCutter menu entry loads this file (it
+    sets SCRIPTCUTTER_EMBEDDED) and calls run() directly, because the free
+    version only allows scripts started from inside Resolve.
+
+M.context() reads the open timeline (which files, which parts, frame rates).
+M.build(plan) creates a new timeline from the plan the app wrote: one clip per
+call, Blue / Brown clip colours, markers on brown clips, optional A/B overlap
+(alternating V1/A1 and V2/A2) and AI Voice Isolation on the audio tracks.
 ]]
 
 local M = {}
@@ -92,6 +97,7 @@ local function wait(seconds)
 end
 
 -- source range of a timeline item, in source frames (end exclusive)
+-- (Resolve reports NTSC sources in their rounded rate: 29.97 counts like 30)
 local function source_range(item)
   local ok1, s = pcall(function() return item:GetSourceStartFrame() end)
   local ok2, e = pcall(function() return item:GetSourceEndFrame() end)
@@ -116,17 +122,20 @@ function M.context()
     for _, it in ipairs(list) do
       local mpi = it:GetMediaPoolItem()
       local path = mpi and mpi:GetClipProperty("File Path") or ""
-      if path ~= "" then
+      -- a clip the editor disabled on the timeline is not meant to be in the video
+      local ok, enabled = pcall(function() return it:GetClipEnabled() end)
+      if path ~= "" and not (ok and enabled == false) then
         local s, e = source_range(it)
         items[#items + 1] = { track = track, name = it:GetName(), path = path,
                               fps = tonumber(mpi:GetClipProperty("FPS")) or 0, src_in = s, src_out = e }
       end
     end
   end
+  -- a timeline can have its own frame rate; the project's is the default for new timelines
+  local tl_fps = tonumber(tl:GetSetting("timelineFrameRate")) or tonumber(proj:GetSetting("timelineFrameRate")) or 24
   return {
     ok = true, product = r:GetProductName(), version = r:GetVersionString(), project = proj:GetName(),
-    timeline = tl:GetName(), timeline_fps = tonumber(proj:GetSetting("timelineFrameRate")) or 24,
-    items = items, created = os.time(),
+    timeline = tl:GetName(), timeline_fps = tl_fps, items = items, created = os.time(),
   }
 end
 
@@ -168,11 +177,19 @@ function M.build(plan)
   local _, proj, err = open_project()
   if err then return err end
   local pool = proj:GetMediaPool()
-  local fps = tonumber(proj:GetSetting("timelineFrameRate")) or 24
   local name = unique_name(proj, plan.name or "ScriptCutter")
   local tl = pool:CreateEmptyTimeline(name)
   if not tl then return { ok = false, error = "Resolve could not create the timeline '" .. name .. "'." } end
   proj:SetCurrentTimeline(tl)
+  -- give the new timeline the rate of the one that was cut (it can differ from the project's)
+  local wanted = tonumber(plan.timeline_fps) or 0
+  if wanted > 0 and math.abs((tonumber(tl:GetSetting("timelineFrameRate")) or 0) - wanted) > 0.001 then
+    pcall(function()
+      tl:SetSetting("useCustomSettings", "1")
+      tl:SetSetting("timelineFrameRate", tostring(wanted))
+    end)
+  end
+  local fps = tonumber(tl:GetSetting("timelineFrameRate")) or tonumber(proj:GetSetting("timelineFrameRate")) or 24
   local start = tl:GetStartFrame()
 
   if plan.checkerboard then

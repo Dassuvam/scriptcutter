@@ -1,17 +1,17 @@
 """
 The editing engine. A Project carries one video (or Resolve timeline) through
 a list of steps. Each step adds its result to the project; when the creator
-should look at that result before going on, the step raises a flag. Nothing
-here depends on the web page, so the CLI or a future automation drives the
-same steps.
+should look at that result before going on, the step raises a flag ("3 to
+check"), which the page shows as ⚑. Nothing here depends on the web page, so
+the command line or a future automation drives the same steps.
 
     cut      find retakes and long pauses      flag: brown parts to check
              (with a pasted script: keep the last good take of every script line)
-    words    words in the spoken language      runs in the background when the cut did not read them
-    (later)  captions, B-roll images, generated shots, music: one Step each
+    words    words in the spoken language      runs in the background, only when the cut did not read them
+    (later)  captions, B-roll images, generated shots, music: one Step subclass each
 
-All outputs (Resolve timeline, Premiere / Final Cut XML, EDL, transcript) read
-the edit document from Project.edit().
+Every output (Resolve timeline, MP4, Premiere / Final Cut XML, EDL,
+transcript) reads the edit document from Project.edit().
 """
 from __future__ import annotations
 
@@ -21,19 +21,19 @@ import uuid
 from bisect import bisect_left
 
 from . import edit as edit_doc
-from . import learn, pipeline, resolve_bridge, scriptmatch
+from . import learn, paths, pipeline, resolve_bridge, scriptmatch
 from .analyze import POLICIES
 from .translit import has_devanagari, to_hinglish
 
-ACTIONS = ("keep", "review", "remove")
+ACTIONS = ("keep", "review", "remove")  # what a creator can choose for a line ("review" = brown)
 
 
 class Step:
-    """One stage of the engine. A subclass sets id/title and implements run()."""
+    """One stage of the engine. A subclass sets id / title and implements run()."""
 
     id = ""
     title = ""
-    background = False  # True: the review is usable while this step still runs
+    background = False  # True: the review page opens while this step still runs
 
     def __init__(self, project: "Project"):
         self.project = project
@@ -45,15 +45,18 @@ class Step:
         raise NotImplementedError
 
     def flag(self) -> str:
-        """Short note when the creator should check this step's result ("" = nothing to check)."""
+        """A short note when the creator should check this step's result ("" = nothing to check)."""
         return ""
 
     def public(self) -> dict:
+        """What the page shows for this step."""
         return {"id": self.id, "title": self.title, "state": self.state, "progress": round(self.progress, 3),
                 "flag": self.flag() if self.state == "done" else "", "error": self.error}
 
 
 class CutStep(Step):
+    """Read the sources, analyse every file, and plan the cut."""
+
     id, title = "cut", "Cut retakes"
 
     def run(self):
@@ -61,26 +64,41 @@ class CutStep(Step):
         if p.source == "resolve":
             p.context, items = resolve_bridge.timeline_sources(p.track)
             if not items:
-                raise RuntimeError(f"No clips with media on video track {p.track} of the open timeline.")
+                raise RuntimeError(f"No clips with media on video track {p.track} of the open timeline. "
+                                   "Is the media offline, or are the clips on another track?")
             p.timeline_name = p.context.get("timeline") or "Timeline"
             p.rep.log(f"Timeline '{p.timeline_name}': {len(items)} clip(s) on V{p.track}")
+            if p.context.get("offline"):
+                p.rep.log(f"{p.context['offline']} clip(s) left out: their media is offline")
             p.sources = items
         else:
             path = os.path.abspath(os.path.expanduser(p.path.strip().strip("'\"")))
             if not os.path.isfile(path):
-                raise RuntimeError(f"File not found: {path}")
+                raise RuntimeError(f"Can't find the video at {path}. Check the path, or use Choose video…")
             p.timeline_name = os.path.splitext(os.path.basename(path))[0]
             p.sources = [{"path": path, "fps": 0.0, "start_sec": 0.0, "end_sec": None}]
-        files = list(dict.fromkeys(s["path"] for s in p.sources))
+
+        files = list(dict.fromkeys(s["path"] for s in p.sources))  # each file once, in timeline order
         p.rep.file_count = len(files)
         for i, path in enumerate(files):
             p.rep.file_index = i
             p.analyses[path] = pipeline.analyze_file(path, p.settings, p.rep, use_cache=p.use_cache)
+        if all(a.get("silent") for a in p.analyses.values()):
+            raise RuntimeError("This video has no sound, so there is nothing to listen to and cut.")
+        for a in p.analyses.values():
+            if a.get("silent"):
+                p.rep.log(f"{a['name']}: nothing to listen to, so it stays in the cut as it is")
+            elif not a.get("background_only") and not a["phrases"]:
+                p.rep.log(f"{a['name']}: no speech found, so it stays in the cut as it is")
         for s in p.sources:
             s["fps"] = s.get("fps") or p.analyses[s["path"]]["info"]["fps"] or 25.0
+
         if p.settings.get("script", "").strip():
             p.script = scriptmatch.apply(p.sources, p.analyses, p.settings["script"])
-            p.rep.log(f"Script: {p.script['found']} of {p.script['lines']} lines found in the recording")
+            if p.script:
+                p.rep.log(f"Script: {p.script['found']} of {p.script['lines']} lines found in the recording")
+            for name in p.script.get("unread", []):
+                p.rep.log(f"{name}: its words could not be read, so the script was not used for it")
         p.replan()
         p.rep.file_index = p.rep.file_count
         st = p.result["stats"]
@@ -94,8 +112,11 @@ class CutStep(Step):
 
 
 class WordsStep(Step):
-    """Words in the spoken language (Hindi letters / Hinglish in the review, the final transcript),
-    when the cut step did not already read them."""
+    """
+    Words in the spoken language (Hindi letters / Hinglish in the review, the
+    transcript), for files whose analysis did not read them already. Normally
+    skipped: analyze_file() reads them itself unless "use_words" is off.
+    """
 
     id, title, background = "words", "Read the words", True
 
@@ -119,16 +140,16 @@ class Project:
 
     def __init__(self, source: str, path: str = "", track: int = 1, settings: dict = None, use_cache: bool = True):
         self.id = uuid.uuid4().hex[:10]
-        self.source, self.path, self.track, self.use_cache = source, path, track, use_cache
+        self.source, self.path, self.track, self.use_cache = source, path, track, use_cache  # source: resolve | file
         self.settings = dict(pipeline.DEFAULT_SETTINGS)
         self.settings.update({k: v for k, v in (settings or {}).items() if v is not None})
-        self.state, self.error = "running", ""
+        self.state, self.error = "running", ""  # running | done | error
         self.rep = pipeline.Reporter()
-        self.context, self.timeline_name = {}, ""
+        self.context, self.timeline_name = {}, ""  # context: what Resolve told us about the open timeline
         self.sources, self.analyses, self.result = [], {}, None
-        self.script = {}  # summary of script mode: lines found / missing
+        self.script = {}  # script mode summary: lines, found, missing
         self.steps = [cls(self) for cls in STEPS]
-        self.approved = False  # the creator sent the cut somewhere: the cut step's flag is cleared
+        self.approved = False  # the creator exported the cut, so the cut step's flag is cleared
         self.builds, self.pending_plan, self.recorded, self.outputs = [], None, {}, []
         self.render = {"state": "idle"}  # the MP4 being made: state, progress, file, error
 
@@ -136,6 +157,7 @@ class Project:
         return next(s for s in self.steps if s.id == step_id)
 
     def public(self) -> dict:
+        """Progress and results for the page (polled while the analysis runs)."""
         return {"id": self.id, "state": self.state, "error": self.error, "progress": round(self.rep.overall(), 4),
                 "stage": self.rep.stage, "logs": self.rep.logs[-60:], "steps": [s.public() for s in self.steps],
                 "stats": self.result["stats"] if self.result else None, "builds": self.builds,
@@ -143,7 +165,11 @@ class Project:
 
     # ----------------------------------------------------------------- running
     def run(self, only: tuple = None):
-        """Run the steps in order. state becomes "done" once the foreground steps finish."""
+        """
+        Run the steps in order (only: the step ids to run). state becomes "done"
+        when the first background step starts, so the review opens right away.
+        A failing background step is reported but never breaks the cut.
+        """
         for s in self.steps:
             if only and s.id not in only:
                 continue
@@ -167,13 +193,15 @@ class Project:
             self.state = "done"
 
     def replan(self):
+        """Re-cut from the cached analysis (instant): after a choice, a policy or a padding change."""
         self.result = pipeline.plan_for_sources(self.sources, self.analyses, self.settings)
 
-    def decisions(self):
+    def decisions(self) -> list:
         return [d for a in self.analyses.values() for d in a["decisions"]]
 
-    # ----------------------------------------------------------------- choices
+    # ----------------------------------------------------------------- the creator's choices
     def set_decision(self, path: str, decision_id: str, action):
+        """Keep / review / cut one line; None goes back to ScriptCutter's own choice."""
         analysis = self.analyses.get(path)
         if not analysis:
             raise RuntimeError("unknown source")
@@ -183,13 +211,14 @@ class Project:
         self.replan()
 
     def bulk(self, from_action: str, action):
-        """e.g. bulk("review", "remove"): every brown line at once."""
+        """E.g. bulk("review", "remove"): every brown line at once (lines set by hand are left alone)."""
         for d in self.decisions():
             if d.get("action") == from_action and not d.get("user_action"):
                 d["user_action"] = action if action in ACTIONS else None
         self.replan()
 
     def change_settings(self, values: dict):
+        """Policy and padding from the review page; anything else needs a new analysis."""
         if values.get("policy") in POLICIES:
             self.settings["policy"] = values["policy"]
         for key in ("max_pause", "head_pad", "tail_pad"):
@@ -198,14 +227,15 @@ class Project:
         self.replan()
 
     def learn_from_choices(self) -> int:
-        """Count the creator's overrides so the next analysis matches their taste."""
+        """Count the creator's overrides (once each) so the next analysis matches their taste (learn.py)."""
         remove_at, review_at = POLICIES.get(self.settings["policy"], POLICIES["balanced"])
 
-        def tool_action(d):
+        def tool_action(d):  # what ScriptCutter would have done without the creator
             c = d["confidence"]
             action = "remove" if c >= remove_at else ("review" if c >= review_at else "keep")
             return "review" if action == "remove" and d.get("llm_only") else action
 
+        # script-mode lines follow the creator's script, not ScriptCutter's taste: nothing to learn from them
         fresh = [d for d in self.decisions() if d.get("user_action") and not d.get("script")
                  and self.recorded.get(d["id"]) != d["user_action"]]
         taught = learn.record(fresh, tool_action)
@@ -214,23 +244,49 @@ class Project:
 
     # ----------------------------------------------------------------- outputs
     def timeline_fps(self) -> float:
+        """Rate of the new timeline: the Resolve timeline's own rate, or (0) the video file's rate."""
         if self.source == "resolve":
             return float(self.context.get("timeline_fps") or 0.0)
-        return 0.0  # a single file: the file's own rate
+        return 0.0
 
     def edit(self, name: str = "") -> dict:
+        """The edit document of the current cut (cutter/edit.py)."""
         words = {p: a.get("_words") for p, a in self.analyses.items()}
         return edit_doc.build(name or f"{self.timeline_name} - AI Cut", self.result["plan"], self.analyses,
                               self.timeline_fps(), words)
 
-    def output_base(self, name: str = "") -> str:
-        """Where files go: next to the (first) source video."""
-        safe = "".join(ch for ch in (name or f"{self.timeline_name} - AI Cut") if ch not in '<>:"/\\|?*').strip()
-        return os.path.join(os.path.dirname(next(iter(self.analyses))), safe or "AI Cut")
+    def require_clips(self):
+        """Exports need something to export."""
+        if not self.result or not self.result["plan"]:
+            raise RuntimeError("Nothing to export: every part is cut. Keep some parts first.")
+
+    def file_name(self, name: str) -> str:
+        """The cut's name as a file name every system accepts (Windows refuses <>:"/\\|?* and a final dot)."""
+        safe = "".join(ch for ch in (name or f"{self.timeline_name} - AI Cut") if ch not in '<>:"/\\|?*' and ch >= " ")
+        return safe.strip().rstrip(". ") or "AI Cut"
+
+    def output_path(self, name: str, ending: str) -> str:
+        """
+        A new file next to the (first) source video, or in Movies / Videos > ScriptCutter
+        when that folder can't be written to (a camera card, a read-only drive).
+        Never overwrites: a second export of the same cut becomes "... 2", "... 3".
+        """
+        safe = self.file_name(name)
+        folder = os.path.dirname(next(iter(self.analyses)))
+        if not os.access(folder, os.W_OK):
+            folder = paths.output_dir()
+        path, n = os.path.join(folder, safe + ending), 2
+        while os.path.exists(path):
+            path, n = os.path.join(folder, f"{safe} {n}{ending}"), n + 1
+        return path
 
     # ----------------------------------------------------------------- review page
     def _texts(self, analysis: dict) -> dict:
-        """Decision id -> text in the spoken language (+ Hinglish), from the original-language words."""
+        """
+        Decision id -> its words in the spoken language (+ Hinglish), from the timed
+        words: every word whose middle lies inside the decision. Cached until the
+        words change (they arrive later when the words step runs in the background).
+        """
         words = analysis.get("_words")
         if words is None:
             return {}
@@ -251,6 +307,7 @@ class Project:
         return analysis["_texts"]
 
     def review_payload(self) -> dict:
+        """Everything the review list needs: every decision in the timeline's ranges, per file."""
         files = []
         for path, a in self.analyses.items():
             ranges = [(s.get("start_sec", 0.0), s.get("end_sec") or a["info"]["duration"])
@@ -258,6 +315,7 @@ class Project:
             texts = self._texts(a)
             decisions = []
             for d in a["decisions"]:
+                # word-level items ScriptCutter keeps anyway would only clutter the list
                 if d["kind"] in ("filler", "restart", "script") and d["action"] == "keep" and not d.get("user_action"):
                     continue
                 if not any(d["end"] > r0 and d["start"] < r1 for r0, r1 in ranges):
@@ -267,6 +325,7 @@ class Project:
                 row.update(texts.get(d["id"], {}))
                 decisions.append(row)
             decisions.sort(key=lambda d: (d["start"], d["kind"] != "phrase"))
+            # which word views the हिंदी / Hinglish / English switch offers for this file
             views = []
             if any(has_devanagari(t["orig"]) for t in texts.values()):
                 views += ["original", "hinglish"]
@@ -276,6 +335,7 @@ class Project:
                 views.append("english")
             files.append({"path": path, "name": a["name"], "language": a["language"], "translated": a["translated"],
                           "has_video": a["info"]["has_video"], "model": a["model"], "llm": a.get("llm"),
+                          "silent": bool(a.get("silent")), "speechless": not a.get("silent") and not a["phrases"],
                           "views": views, "decisions": decisions})
         return {"job": self.public(), "files": files, "timeline_name": self.timeline_name, "learned": learn.summary(),
                 "script": self.script}

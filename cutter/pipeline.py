@@ -1,8 +1,22 @@
 """
-Source file -> analysis -> clip plan.
+Source file -> analysis -> clip plan. The heart of the engine.
 
-Audio, transcript, voice and screen-motion results are cached per file, so
-changing the policy, padding or your own choices re-cuts instantly.
+analyze_file() runs once per source file, in this order:
+
+    probe            what is in the file (media.py)
+    audio            16 kHz mono WAV (cached)
+    levels           loudness envelope -> where any sound is (energy.py)
+    voice            Silero: which of that sound is a human voice (vad.py, optional)
+    language         Whisper's guess, three samples vote (cached)
+    transcribe       Whisper in <= 24 s chunks (cached)
+    words            the spoken-language words, when the main transcript is a translation (cached)
+    analyse          retakes, restarts, fillers -> decisions with a confidence (analyze.py, restarts.py)
+    video            screen recordings: where the picture moves (in a thread, while Whisper runs)
+    ai               optional second opinion (llm.py)
+
+plan_for_sources() then turns the decisions into clips for each piece of the
+timeline. It is cheap, so changing the policy, padding or a Keep / Cut choice
+re-cuts instantly from the cached analysis.
 
 Two transcripts can exist per file: the one retakes are matched on (for
 non-English speech usually Whisper's English translation) and the timed words
@@ -14,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import threading
 import time
 from bisect import bisect_left
@@ -48,10 +63,14 @@ DEFAULT_SETTINGS = {
 
 # one Whisper at a time: two large models at once can run a laptop out of memory
 WHISPER_LOCK = threading.Lock()
+STEADY_DB = 12.0  # loudness range below this, with no voice found, means background sound only
 
 
 class Reporter:
-    """Progress sink. Stages have weights so the bar moves sensibly on long files."""
+    """
+    Collects log lines and the current stage for the progress bar. Stage weights
+    are rough shares of the total time, so the bar moves evenly on long files.
+    """
 
     STAGES = [("audio", 4), ("levels", 2), ("language", 4), ("transcribe", 45), ("words", 25), ("analyse", 4),
               ("video", 6), ("ai", 10)]
@@ -90,6 +109,7 @@ class Reporter:
 
 
 def _load_json(path):
+    """A cached result, or None when it is missing or unreadable (then it is simply computed again)."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -98,6 +118,7 @@ def _load_json(path):
 
 
 def _save_json(path, data):
+    """Write through a temporary file, so an interrupted run never leaves a broken cache file."""
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -105,11 +126,13 @@ def _save_json(path, data):
 
 
 def _transcript_key(model: str, lang: str, translate: bool, sens: float, voice_used: bool) -> str:
+    """Cache file name: a transcript depends on the model, language, mode, sensitivity and voice detection."""
     return (f"transcript_{os.path.basename(model)}_{lang}_{'en' if translate else 'orig'}_{sens:+.0f}"
             f"{'_vad' if voice_used else ''}.json")
 
 
 def _transcribe(log, *args, **kwargs) -> dict:
+    """transcribe() under WHISPER_LOCK, timed."""
     if not WHISPER_LOCK.acquire(blocking=False):
         log("Waiting for the speech engine to finish the previous script...")
         WHISPER_LOCK.acquire()
@@ -136,6 +159,7 @@ def words_from_segments(segments: list) -> list:
 
 def _spoken_words(path: str, lang: str, model_request: str, sens: float, voice_used: bool, wav: str, loose: list,
                   env, regions: list, progress=None, log=print, use_cache: bool = True) -> list:
+    """Transcribe in the spoken language (no translation) and return the timed words. Cached."""
     model = pick_model(model_request, translate=False, language=lang)
     tpath = os.path.join(cache_dir_for(path), _transcript_key(model, lang, False, sens, voice_used))
     tr = _load_json(tpath) if use_cache else None
@@ -146,7 +170,19 @@ def _spoken_words(path: str, lang: str, model_request: str, sens: float, voice_u
     return words_from_segments(clean_segments(tr["raw"], regions))
 
 
+def silent_analysis(info: dict) -> dict:
+    """
+    The analysis of a file without a sound track (a title card, a screen recording
+    without a mic): nothing to listen to, so plan_for_sources() keeps it whole.
+    """
+    return {"path": info["path"], "name": os.path.basename(info["path"]), "info": info, "silent": True,
+            "language": "", "language_p": 0.0, "translated": False, "model": "", "levels": None, "regions": [],
+            "phrases": [], "decisions": [], "frozen": None, "llm": None, "learned": {}, "transcribe_seconds": None,
+            "_env": None, "_words": [], "_speech": None}
+
+
 def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: bool = True) -> dict:
+    """Analyse one source file (see the module docstring for the stages). Settings: DEFAULT_SETTINGS."""
     s = dict(DEFAULT_SETTINGS)
     s.update({k: v for k, v in (settings or {}).items() if v is not None})
     rep = rep or Reporter()
@@ -154,6 +190,9 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
 
     rep.set("audio")
     info = probe(path)
+    if not info["audio_streams"]:
+        rep.log(f"{name}: no sound track")
+        return silent_analysis(info)
     cdir = cache_dir_for(path)
     rep.log(f"{name}: {info['duration'] / 60:.1f} min, {info['fps']:.3f} fps, "
             f"{info['audio_streams']} audio stream(s)")
@@ -187,15 +226,21 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
             frozen_thread = threading.Thread(target=_scan, daemon=True)
             frozen_thread.start()
 
-    # neural voice detection: keeps typing / clicks / music away from Whisper
+    # neural voice detection: keeps typing / clicks / music away from Whisper. Optional: a failure
+    # only means the loudness envelope alone decides what is speech
     voice_used = False
     nonvoice = []
+    voice = None
     if s["use_vad"] and vad.available():
         vpath = os.path.join(cdir, "voice.json")
         voice = _load_json(vpath) if use_cache else None
         if voice is None:
-            voice = vad.voice_segments(wav)
-            _save_json(vpath, voice)
+            try:
+                voice = vad.voice_segments(wav)
+                _save_json(vpath, voice)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                rep.log(f"Voice detector did not work ({e}); using loudness only")
+    if voice is not None:
         sound_total = sum(b - a for a, b in loose) or 1.0
         if sum(b - a for a, b in voice) > 0.15 * sound_total:
             loose, _ = vad.intersect(loose, voice)
@@ -203,6 +248,14 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
             voice_used = True
             rep.log(f"Voice detector: {sum(b - a for a, b in regions) / 60:.1f} min of actual speech, "
                     f"{sum(b - a for a, b in nonvoice) / 60:.1f} min of other sounds (typing, music, noise)")
+        elif env.speech_level - env.noise_floor < STEADY_DB:
+            # no voice, and the sound hardly changes (room tone, fan, music bed): Whisper would only
+            # invent words here ("Thank you.", counting), and invented repeats could cut B-roll
+            rep.log(f"{name}: only background sound, no speech, so it stays in the cut as it is")
+            quiet = silent_analysis(info)
+            quiet.update(silent=False, background_only=True, regions=regions, _env=env, levels={
+                "noise_floor": round(env.noise_floor, 1), "speech": round(env.speech_level, 1), "threshold": round(on, 1)})
+            return quiet
         else:
             rep.log("Voice detector found almost no speech - falling back to loudness only")
 
@@ -333,7 +386,10 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
 
 
 def original_words(analysis: dict, progress=None, log=print, use_cache: bool = True) -> list:
-    """Words in the spoken language with source times (Hindi letters for Hindi). Cached per file."""
+    """
+    Words in the spoken language with source times (Hindi letters for Hindi), for an
+    analysis that did not read them yet (use_words switched off). Cached per file.
+    """
     if analysis.get("_words") is not None:
         return analysis["_words"]
     sp = analysis["_speech"]
@@ -345,9 +401,12 @@ def original_words(analysis: dict, progress=None, log=print, use_cache: bool = T
 
 def plan_for_sources(sources: list, analyses: dict, settings: dict) -> dict:
     """
-    sources: ordered timeline items [{"path", "fps", "start_sec", "end_sec"}]
-             (for a plain file: one item covering the whole file)
+    The cut: every kept or brown clip, in timeline order, in source frames.
+
+    sources:  the pieces of the timeline in order [{"path", "fps", "start_sec", "end_sec"}]
+              (a plain file is one piece covering the whole file)
     analyses: path -> analysis from analyze_file()
+    Returns {"plan": [clip...], "removed": [cut item...], "stats": {...}} for the page and the exporters.
     """
     s = dict(DEFAULT_SETTINGS)
     s.update(settings or {})
@@ -356,13 +415,20 @@ def plan_for_sources(sources: list, analyses: dict, settings: dict) -> dict:
               "review_clips": 0, "clips": 0}
     for src in sources:
         a = analyses[src["path"]]
-        apply_policy(a["decisions"], s["policy"])
-        env = a["_env"]
-        rng = (max(0.0, src.get("start_sec", 0.0)), min(env.duration, src.get("end_sec") or env.duration))
-        res = build_clips(a["decisions"], a["regions"], env,
-                          {k: s[k] for k in ("max_pause", "head_pad", "tail_pad")},
-                          source_range=rng, frozen=a.get("frozen"), screen_mode=s["footage"] == "screen")
         fps = src.get("fps") or a["info"]["fps"] or 25.0
+        length = a["_env"].duration if a["_env"] else a["info"]["duration"]
+        rng = (max(0.0, src.get("start_sec", 0.0)), min(length, src.get("end_sec") or length))
+        if a.get("silent") or not a["phrases"]:
+            # no sound, or sound without speech (B-roll, music): nothing to judge, so it stays whole
+            whole = {"start": rng[0], "end": rng[1], "status": "keep", "ids": [], "reasons": [], "text": ""}
+            res = {"clips": [whole], "removed": [], "stats": {
+                "source_seconds": rng[1] - rng[0], "kept_seconds": rng[1] - rng[0], "review_seconds": 0.0,
+                "removed_takes": 0, "review_clips": 0, "clips": 1}}
+        else:
+            apply_policy(a["decisions"], s["policy"])
+            res = build_clips(a["decisions"], a["regions"], a["_env"],
+                              {k: s[k] for k in ("max_pause", "head_pad", "tail_pad")},
+                              source_range=rng, frozen=a.get("frozen"), screen_mode=s["footage"] == "screen")
         for c in to_frames(res["clips"], fps):
             c.update(path=src["path"], src_fps=fps, source_name=os.path.basename(src["path"]))
             plan.append(c)

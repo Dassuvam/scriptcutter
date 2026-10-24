@@ -15,22 +15,26 @@ import json
 import math
 import os
 import subprocess
+import threading
 import time
 import uuid
 
 from . import paths
 
 LUA = os.path.join(paths.APP_ROOT, "resolve", "scriptcutter.lua")
-SNAPSHOT_MAX_AGE = 12 * 3600
+SNAPSHOT_MAX_AGE = 12 * 3600  # a menu snapshot older than this is not trusted
 _status_cache = {"at": 0.0, "value": None}
+_status_lock = threading.Lock()  # one fuscript at a time; others get the last answer
 
 
 # --------------------------------------------------------------------------- files
 def _bridge(name: str) -> str:
+    """A file in the bridge folder shared with the Lua scripts."""
     return os.path.join(paths.bridge_dir(), name)
 
 
 def _read_json(path: str):
+    """A JSON file written by the Lua side, or None (missing, half written, or not JSON)."""
     try:
         with open(path, "rb") as f:
             return json.loads(f.read().decode("utf-8", "replace"))
@@ -39,6 +43,7 @@ def _read_json(path: str):
 
 
 def _lua_string(s: str) -> str:
+    """A Python string as a safe Lua string literal (quotes, backslashes and control characters escaped)."""
     out = []
     for ch in s:
         if ch == "\\":
@@ -74,7 +79,12 @@ def to_lua(value) -> str:
 
 
 # --------------------------------------------------------------------------- live route
-def _run_lua(mode: str, *args: str, timeout: float = 30.0):
+def _run_lua(mode: str, *args: str, timeout: float = 15.0):
+    """
+    Run scriptcutter.lua with Resolve's fuscript (Resolve Studio). The last argument
+    is the JSON file the script writes its answer to. None when fuscript is missing,
+    Resolve doesn't answer in time, or the answer is unreadable.
+    """
     exe = paths.find_program("fuscript")
     if not exe:
         return None
@@ -106,8 +116,23 @@ def snapshot_context():
 
 
 def status(max_age: float = 10.0) -> dict:
+    """
+    How ScriptCutter can reach Resolve right now, for the status line in the page:
+    mode "live" (Studio), "menu" (a recent snapshot from the Scripts menu) or "none".
+    Cached for max_age seconds. While one check is talking to Resolve, other calls
+    get the last answer at once instead of piling up behind a slow Resolve.
+    """
     if _status_cache["value"] and time.time() - _status_cache["at"] < max_age:
         return _status_cache["value"]
+    if not _status_lock.acquire(blocking=False):
+        return _status_cache["value"] or {"connected": False, "mode": "none", "studio": False}
+    try:
+        return _check_status()
+    finally:
+        _status_lock.release()
+
+
+def _check_status() -> dict:
     live = live_context()
     if live:
         value = {"connected": True, "mode": "live", "product": live.get("product"), "project": live.get("project"),
@@ -128,33 +153,44 @@ def status(max_age: float = 10.0) -> dict:
 
 
 def timeline_sources(track: int = 1) -> tuple:
-    """(context, items on the video track) from live Resolve or the menu snapshot."""
+    """
+    (context, the clips on one video track) from live Resolve or the menu snapshot.
+    Each clip: its file and the part of the file the timeline uses, in seconds.
+    Clips whose media is offline are left out; the context records how many.
+    """
     ctx = live_context() or snapshot_context()
     if not ctx:
         raise RuntimeError("Can't see your Resolve timeline. In DaVinci Resolve choose Workspace > Scripts > "
                            "ScriptCutter (needed once per timeline in the free version), then try again.")
     if not ctx.get("ok"):
         raise RuntimeError(ctx.get("error") or "Resolve did not return the timeline.")
-    items = []
+    items, offline = [], 0
     for it in ctx.get("items", []):
         fps = float(it.get("fps") or 0)
-        if int(it.get("track", 1)) != track or not fps or not os.path.isfile(it.get("path", "")):
+        if int(it.get("track", 1)) != track or not fps:
+            continue
+        if not os.path.isfile(it.get("path", "")):
+            offline += 1
             continue
         items.append({"name": it.get("name"), "path": it["path"], "fps": fps,
                       "start_sec": it["src_in"] / fps, "end_sec": it["src_out"] / fps})
+    ctx["offline"] = offline
     return ctx, items
 
 
 # --------------------------------------------------------------------------- building
 def build(plan_clips: list, name: str, checkerboard: bool = True, overlap_frames: int = 3,
-          voice_isolation: bool = True, markers: bool = True) -> dict:
+          voice_isolation: bool = True, markers: bool = True, timeline_fps: float = 0.0) -> dict:
     """
-    Builds the timeline right away with Resolve Studio. Otherwise saves the plan
-    and returns {"pending": True, ...} until the user runs the Build menu entry.
+    Build the new timeline. Resolve Studio: right away, through fuscript. Free
+    version: the plan is saved as bridge/plan.lua and {"pending": True, ...} is
+    returned until the creator chooses Workspace > Scripts > ScriptCutter again.
+    timeline_fps: the rate of the timeline being cut, so the new one matches it.
     """
     plan_id = uuid.uuid4().hex[:12]
     plan = {
-        "plan_id": plan_id, "created": int(time.time()), "name": name, "checkerboard": bool(checkerboard), "overlap": int(overlap_frames),
+        "plan_id": plan_id, "created": int(time.time()), "name": name, "timeline_fps": float(timeline_fps or 0),
+        "checkerboard": bool(checkerboard), "overlap": int(overlap_frames),
         "voice_isolation": bool(voice_isolation), "voice_amount": 100, "markers": bool(markers),
         "clips": [{"path": c["path"], "fps": float(c["src_fps"]), "src_in": int(c["src_in"]),
                    "src_out": int(c["src_out"]), "status": c["status"],

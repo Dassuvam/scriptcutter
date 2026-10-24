@@ -36,9 +36,12 @@
           <div class="hint">Your timeline is never changed; a new one is created. Free version of Resolve: open ScriptCutter from Resolve's Workspace → Scripts menu so it can see your timeline.</div>
         </div>
         <div id="sourceFile" hidden>
-          <label class="field-label" for="filePath">Path to the raw recording</label>
-          <input type="text" id="filePath" placeholder="/Users/you/Movies/raw.mov">
-          <div class="hint">Drag the file from Finder into this box, or Option-right-click it → Copy as Pathname.</div>
+          <label class="field-label" for="filePath">Your raw recording</label>
+          <div class="input-row">
+            <input type="text" id="filePath" placeholder="Choose a video, or paste its path">
+            <button class="button button-small" id="chooseFile" type="button">Choose video…</button>
+          </div>
+          <div class="hint">Press Choose video…, or drag the file into the box.</div>
         </div>
 
         <div class="kicker">Step 2 · Footage</div>
@@ -208,7 +211,7 @@
 
   <dialog class="help" id="help" aria-labelledby="helpTitle">
     <div class="help-head">
-      <h2 id="helpTitle">How to use ScriptCutter</h2>
+      <h2 id="helpTitle">How to use ScriptCutter <small class="help-version" id="appVersion"></small></h2>
       <button class="icon-button" id="helpClose" title="Close (Esc)">✕</button>
     </div>
     <div class="help-body">
@@ -233,7 +236,7 @@
 
       <h3>Get the finished video, or edit in another app</h3>
       <ol>
-        <li>Choose <b>Video file</b> and drag your raw recording into the box (or use your Resolve timeline).</li>
+        <li>Choose <b>Video file</b> and press <b>Choose video…</b> (or use your Resolve timeline).</li>
         <li>Press <b>Analyse</b> and check the list, just like above.</li>
         <li>In the bar at the bottom, pick what you want under <b>Export as</b>: <b>MP4 video</b> (the finished cut, ready to upload), <b>DaVinci Resolve</b>, <b>Premiere Pro</b>, <b>Final Cut Pro</b> or another editor. Then press the button next to it. Files are saved next to your video.</li>
         <li><b>Premiere Pro</b>: File → Import, pick the <b>.xml</b> file. <b>Final Cut Pro</b>: File → Import → XML, pick the <b>.fcpxml</b> file. <b>Other apps</b>: import the <b>.edl</b> file.</li>

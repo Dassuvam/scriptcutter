@@ -103,6 +103,11 @@ def main():
     print(f"\n{st['source_seconds'] / 60:.1f} min -> {st['kept_seconds'] / 60:.1f} min in {st['clips']} clips, "
           f"{st['removed_takes']} takes removed, {st['review_clips']} brown clips to review")
 
+    if any(outputs.values()) or args.command == "resolve":
+        try:
+            project.require_clips()
+        except RuntimeError as e:
+            sys.exit(str(e))
     edit = project.edit()
     for fmt, path in outputs.items():
         if path:
@@ -111,7 +116,7 @@ def main():
     if args.command == "resolve":
         res = resolve_bridge.build(result["plan"], edit["name"], checkerboard=args.checkerboard,
                                    overlap_frames=args.overlap_frames, voice_isolation=args.voice_isolation,
-                                   markers=args.markers)
+                                   markers=args.markers, timeline_fps=project.timeline_fps())
         if res.get("pending"):
             print(res["message"])
         elif res.get("ok"):

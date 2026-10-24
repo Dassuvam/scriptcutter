@@ -54,21 +54,30 @@ const NEW_DEFAULTS = { 2: ["checkerboard", "voiceIsolation"] };  // version -> c
 
 // ---------------------------------------------------------------- helpers
 const escapeHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// rounded once, so 59.96 s never shows as "00:60.0" and 119.6 s never as "1m 60s"
 const clock = (t) => {
-  const m = Math.floor(t / 60);
-  return `${String(m).padStart(2, "0")}:${(t - m * 60).toFixed(1).padStart(4, "0")}`;
+  const tenths = Math.round(t * 10);
+  const m = Math.floor(tenths / 600);
+  return `${String(m).padStart(2, "0")}:${((tenths - m * 600) / 10).toFixed(1).padStart(4, "0")}`;
 };
-const duration = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s` : `${Math.round(s)}s`);
+const duration = (s) => {
+  const t = Math.round(s);
+  return t >= 60 ? `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, "0")}s` : `${t}s`;
+};
 const modelLabel = (m) => m.replace(/^ggml-|\.bin$/g, "");
 const basename = (p) => p.split(/[\\/]/).pop();
 
+// GET without a body, POST with one. The X-ScriptCutter header proves the request comes from
+// this page (the server refuses POSTs without it, so other websites can't send commands)
 async function api(path, body) {
   const options = body === undefined ? {} : {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    method: "POST", headers: { "Content-Type": "application/json", "X-ScriptCutter": "1" }, body: JSON.stringify(body),
   };
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({ error: "Bad response from the local server" }));
-  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+  // only an error status is a failed request: a finished-with-error analysis or a refused
+  // Resolve build is a normal answer that carries its own "error" text for the page to show
+  if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
 }
 
@@ -184,12 +193,29 @@ onSwitch("policySwitch", (v) => { state.policy = v; setSwitch("policySwitchRevie
 $("provider").addEventListener("change", () => { showProvider(true); saveSettings(); });
 $("checkerboard").addEventListener("change", () => { $("overlapField").hidden = !$("checkerboard").checked; });
 [...SETTINGS_FIELDS, ...SETTINGS_CHECKS, "llmModel", "apiKey"].forEach((id) => $(id).addEventListener("change", saveSettings));
+// a file dropped on the path box arrives as a file:// address (the first line of a uri-list)
 $("filePath").addEventListener("drop", (e) => {
-  const t = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-  if (!t) return;
+  const line = (e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain"))
+    .split(/\r?\n/).find((l) => l.trim() && !l.startsWith("#"));
+  if (!line) return;
   e.preventDefault();
-  $("filePath").value = decodeURIComponent(t.replace(/^file:\/\//, "").trim());
+  let p = decodeURIComponent(line.trim().replace(/^file:\/\/(localhost)?/, ""));
+  if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);  // Windows: file:///C:/Users/... -> C:/Users/...
+  $("filePath").value = p;
   saveSettings();
+});
+// the system's own file window, opened by the local server (a browser can't hand over full paths)
+$("chooseFile").addEventListener("click", async () => {
+  $("chooseFile").disabled = true;
+  try {
+    const r = await api("/api/choose-file", {});
+    if (r.path) {
+      $("filePath").value = r.path;
+      saveSettings();
+      showError("");
+    }
+  } catch (e) { showError("Could not open the file window: " + e.message); }
+  $("chooseFile").disabled = false;
 });
 
 // ---------------------------------------------------------------- Resolve status
@@ -222,6 +248,7 @@ function fillChoices(s) {
   (s.editors || []).forEach((e) => $("editor").add(new Option(e.label, e.id)));
   $("editor").value = state.editor;
   showEditor();
+  $("appVersion").textContent = s.app_version ? `version ${s.app_version}` : "";
   if (!s.whisper) showError("whisper-cli is missing. Run the installer again.");
   else if (!(s.models || []).length) showError("No Whisper model found. Run the installer again.");
 }
@@ -251,7 +278,7 @@ function collectSettings() {
 $("analyse").addEventListener("click", async () => {
   showError("");
   saveSettings();
-  if (state.source === "file" && !$("filePath").value.trim()) return showError("Enter the path of the video file.");
+  if (state.source === "file" && !$("filePath").value.trim()) return showError("Choose your video first (Choose video…).");
   $("analyse").disabled = true;
   $("progressCard").hidden = false;
   $("log").textContent = "";
@@ -279,7 +306,10 @@ async function pollJob() {
     $("analyse").disabled = false;
     if (j.state === "error") return showError(j.error);
     state.review = await api(`/api/job/${state.job}/review`);
-    if (!$("timelineName").value) $("timelineName").value = `${state.review.timeline_name} - AI Cut`;
+    // the cut's name follows the video, unless the creator typed a name of their own
+    const suggested = `${state.review.timeline_name} - AI Cut`;
+    if (!$("timelineName").value || $("timelineName").value === state.suggestedName) $("timelineName").value = suggested;
+    state.suggestedName = suggested;
     state.selected = null;
     render();
   } catch (e) {
@@ -414,8 +444,11 @@ function renderFiles(R) {
   R.files.forEach((f) => {
     const head = document.createElement("div");
     head.className = "file-head";
-    const ai = f.llm ? ` · AI: ${f.llm.notes} notes${f.llm.errors.length ? `, ${f.llm.errors.length} failed` : ""}` : "";
-    head.innerHTML = `<b>${escapeHtml(f.name)}</b><span>${f.language}${f.translated ? " · via English" : ""} · ${escapeHtml(modelLabel(f.model))}${ai}</span>`;
+    const about = f.silent ? ["no sound: kept as it is"]
+      : [f.language + (f.translated ? " · via English" : ""), modelLabel(f.model)];
+    if (f.speechless) about.push("no speech found: kept as it is");
+    if (f.llm) about.push(`AI: ${f.llm.notes} notes${f.llm.errors.length ? `, ${f.llm.errors.length} failed` : ""}`);
+    head.innerHTML = `<b>${escapeHtml(f.name)}</b><span>${escapeHtml(about.filter(Boolean).join(" · "))}</span>`;
     holder.appendChild(head);
 
     const rows = document.createElement("div");
@@ -425,7 +458,10 @@ function renderFiles(R) {
     f.decisions
       .filter((d) => state.filter === "all" || d.action === state.filter)
       .forEach((d) => rows.appendChild(renderRow(d, f.path, byId, view)));
-    if (!rows.children.length) rows.innerHTML = `<div class="empty">Nothing in this filter.</div>`;
+    if (!rows.children.length) {
+      const why = f.silent || f.speechless ? "No speech here, so nothing was cut." : "Nothing in this filter.";
+      rows.innerHTML = `<div class="empty">${why}</div>`;
+    }
     holder.appendChild(rows);
   });
 }

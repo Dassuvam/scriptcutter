@@ -40,10 +40,12 @@ CHUNK_PAD = 0.25
 
 
 def find_whisper_cli() -> str:
+    """whisper.cpp's command-line program (called whisper-cpp in some older builds)."""
     return paths.find_program("whisper-cli") or paths.find_program("whisper-cpp")
 
 
 def installed_models() -> list:
+    """Model files in the model folder, by name. Tiny broken downloads (< 30 MB) are ignored."""
     d = paths.model_dir()
     if not os.path.isdir(d):
         return []
@@ -52,22 +54,27 @@ def installed_models() -> list:
 
 
 def _core_name(filename: str) -> str:
+    """'ggml-large-v3-turbo.bin' -> 'large-v3-turbo'."""
     return re.sub(r"^ggml-|\.bin$", "", filename)
 
 
 def can_translate(model_path: str) -> bool:
+    """Turbo models were trained without translation, and '.en' models only know English."""
     core = _core_name(os.path.basename(model_path))
     return "turbo" not in core and not core.endswith(".en")
 
 
 def pick_model(requested: str, translate: bool, language: str) -> str:
-    """Turn 'auto' or a model file name into an absolute path."""
+    """
+    'auto' or a model file name -> absolute path. 'auto' takes the best installed
+    model (MODEL_ORDER) that can do the job. A chosen model that has since been
+    deleted also falls back to 'auto', so an old saved setting never blocks an analysis.
+    """
     d = paths.model_dir()
     if requested and requested != "auto":
         p = requested if os.path.isabs(requested) else os.path.join(d, requested)
         if os.path.isfile(p):
             return p
-        raise RuntimeError(f"Whisper model not found: {p}")
     have = {_core_name(f): f for f in installed_models()}
     for core in MODEL_ORDER:
         if core not in have:
@@ -81,6 +88,7 @@ def pick_model(requested: str, translate: bool, language: str) -> str:
 
 
 def dtw_preset(model_path: str) -> str:
+    """whisper.cpp's name for the model's attention layout, needed for exact word times (DTW)."""
     core = re.sub(r"-q\d_\d$", "", _core_name(os.path.basename(model_path)))
     return DTW_PRESETS.get(core, "")
 
@@ -240,8 +248,12 @@ def transcribe(wav_path: str, regions: list, duration: float, env, model_path: s
                 files.append(os.path.join(tmp, f"c{i:05d}.wav"))
                 _write_wav(files[-1], src, [span])
 
-        cmd = [exe, "-m", model_path, "-l", language, "-mc", "0", "-ojf", "-np", "-sns",
-               "-t", str(max(2, min(8, (os.cpu_count() or 4) // 2)))]
+        # on a graphics chip (every Mac; Windows with the installer's NVIDIA build) half the cores feed it;
+        # on the processor alone every core but one does the work
+        gpu = not paths.IS_WINDOWS or bool(paths.config_value("whisper_gpu"))
+        cores = os.cpu_count() or 4
+        threads = max(2, min(8, cores // 2)) if gpu else min(8, max(2, cores - 1))
+        cmd = [exe, "-m", model_path, "-l", language, "-mc", "0", "-ojf", "-np", "-sns", "-t", str(threads)]
         if translate:
             cmd.append("-tr")
         else:
@@ -252,15 +264,16 @@ def transcribe(wav_path: str, regions: list, duration: float, env, model_path: s
                 cmd += ["--prompt", VERBATIM_PROMPT_EN]
         started = time.time()
         log_path = os.path.join(tmp, "whisper.log")
-        with open(log_path, "w") as lf:
-            proc = subprocess.Popen(cmd + files, stdout=subprocess.DEVNULL, stderr=lf)
-            while proc.poll() is None:
-                time.sleep(0.4)
-                if progress:
-                    progress(sum(1 for f in files if os.path.isfile(f + ".json")) / len(files))
-        if proc.returncode != 0:
+        returncode = _run_whisper(cmd + files, files, log_path, progress)
+        if returncode != 0 and gpu:
+            # the graphics chip can fail (older Macs, memory pressure, an old NVIDIA driver):
+            # run once more on the processor before giving up
+            if log:
+                log("Speech recognition failed on the graphics chip; trying again on the processor (slower)...")
+            returncode = _run_whisper(cmd + ["-ng"] + files, files, log_path, progress)
+        if returncode != 0:
             with open(log_path, "r", errors="replace") as lf:
-                raise RuntimeError(f"whisper-cli failed (exit {proc.returncode}): {lf.read()[-600:]}")
+                raise RuntimeError(f"whisper-cli failed (exit {returncode}): {lf.read()[-600:]}")
         if log:
             log(f"Whisper finished {len(files)} chunks in {time.time() - started:.1f}s")
 
@@ -271,6 +284,20 @@ def transcribe(wav_path: str, regions: list, duration: float, env, model_path: s
                     seg["chunk"] = ci
                     segments.append(seg)
     return {"raw": segments, "chunks": chunks}
+
+
+def _run_whisper(cmd: list, files: list, log_path: str, progress=None) -> int:
+    """Run whisper-cli over all chunk files; progress = share of chunks with a finished .json."""
+    for f in files:  # a retry must not count the first run's results as progress
+        if os.path.isfile(f + ".json"):
+            os.unlink(f + ".json")
+    with open(log_path, "w") as lf:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=lf)
+        while proc.poll() is None:
+            time.sleep(0.4)
+            if progress:
+                progress(sum(1 for f in files if os.path.isfile(f + ".json")) / len(files))
+    return proc.returncode
 
 
 # --------------------------------------------------------------------------- cleaning

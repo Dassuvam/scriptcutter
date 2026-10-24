@@ -1,0 +1,84 @@
+name: install
+
+# Installs ScriptCutter from the built downloads on a fresh Mac and Windows machine,
+# the way a user does (double-clicking "Install ScriptCutter"), checks the result and uninstalls it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["Mac/**", "Windows/**", "install.py", "uninstall.py", "launcher.py", "cutter/paths.py",
+            "tools/build_release.py", ".github/workflows/install.yml"]
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: /usr/bin/python3 tools/build_release.py
+      - name: Install from ScriptCutter-Mac.zip
+        run: |
+          ditto -x -k dist/ScriptCutter-Mac.zip "$RUNNER_TEMP/download"
+          bash "$RUNNER_TEMP/download/ScriptCutter/Install ScriptCutter.command" --yes --no-open 2>&1 | tee install.log
+          grep -q "speech recognition works" install.log
+      - name: Check the installed app
+        run: |
+          APP="$HOME/Library/Application Support/ScriptCutter/App"
+          test -f "$APP/launcher.py"
+          test -f "$HOME/Applications/ScriptCutter.app/Contents/Resources/applet.icns"
+          codesign -v "$HOME/Applications/ScriptCutter.app"
+          test -f "$HOME/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/ScriptCutter.lua"
+          BROWSER=true /usr/bin/python3 "$APP/launcher.py"
+          curl -s http://127.0.0.1:7870/api/status > status.json
+          /usr/bin/python3 -c "import json; s = json.load(open('status.json')); print(s); assert s['whisper'] and s['ffmpeg'] and s['models'] and s['app_root'].endswith('App')"
+      - name: Uninstall
+        run: |
+          printf 'y\ny\n' | /usr/bin/python3 "$HOME/Library/Application Support/ScriptCutter/App/uninstall.py"
+          test ! -e "$HOME/Applications/ScriptCutter.app"
+          test ! -e "$HOME/Library/Application Support/ScriptCutter/App"
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python tools/build_release.py
+      - name: Unzip ScriptCutter-Windows.zip
+        shell: powershell
+        run: Expand-Archive dist\ScriptCutter-Windows.zip "$env:RUNNER_TEMP\download"
+      - name: Install by double-clicking "Install ScriptCutter.bat"
+        shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cd /d "%RUNNER_TEMP%\download\ScriptCutter"
+          call "Install ScriptCutter.bat" --yes --no-open < NUL > "%RUNNER_TEMP%\install.log" 2>&1
+          type "%RUNNER_TEMP%\install.log"
+          findstr /C:"speech recognition works" "%RUNNER_TEMP%\install.log"
+      - name: Check the installed app
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = "$env:LOCALAPPDATA\ScriptCutter\App"
+          foreach ($f in @("$app\launcher.py", "$app\assets\ScriptCutter.ico",
+                           "$env:LOCALAPPDATA\ScriptCutter\tools\whisper\whisper-cli.exe",
+                           "$env:APPDATA\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\ScriptCutter.lua",
+                           (Join-Path ([Environment]::GetFolderPath('Programs')) "ScriptCutter.lnk"),
+                           (Join-Path ([Environment]::GetFolderPath('Desktop')) "ScriptCutter.lnk"))) {
+            if (-not (Test-Path $f)) { throw "missing: $f" }
+          }
+          Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScriptCutter |
+            Format-List DisplayName, DisplayVersion, UninstallString, EstimatedSize
+          $py = (& py -3 -c "import sys; print(sys.executable)").Trim()
+          Start-Process $py -ArgumentList "$app\web\server.py", "7870"
+          $s = $null
+          for ($i = 0; $i -lt 30 -and -not $s; $i++) {
+            try { $s = Invoke-RestMethod http://127.0.0.1:7870/api/status } catch { Start-Sleep 1 }
+          }
+          $s | ConvertTo-Json -Depth 3
+          if (-not ($s.whisper -and $s.ffmpeg -and $s.models.Count)) { throw "ScriptCutter is not complete" }
+      - name: Uninstall
+        shell: powershell
+        run: |
+          "y`ny`n" | py -3 "$env:LOCALAPPDATA\ScriptCutter\App\uninstall.py"
+          if (Test-Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScriptCutter) { throw "still in Settings > Apps" }
+          if (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) "ScriptCutter.lnk")) { throw "shortcut left" }

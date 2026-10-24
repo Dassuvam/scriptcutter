@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(ROOT, "tests"))
 from cutter import analyze as an  # noqa: E402
 import xml.etree.ElementTree as ET  # noqa: E402
 
-from cutter import cuts, exporters, llm, paths, resolve_bridge, restarts, scriptmatch, text, translit  # noqa: E402
+from cutter import cuts, exporters, llm, media, paths, pipeline, resolve_bridge, restarts, scriptmatch, text, translit  # noqa: E402
 from cutter import edit as edit_doc  # noqa: E402
 from cutter.exporters.transcript import _srt_time, plain_text  # noqa: E402
 from cutter.project import Project  # noqa: E402
@@ -207,6 +207,23 @@ class EditTests(unittest.TestCase):
         self.assertEqual(edit_doc.tc_to_frames("01:00:00:00", 25), 90000)
         self.assertEqual(edit_doc.frames_to_tc(90000 + 37, 25), "01:00:01:12")
 
+    def test_drop_frame_timecode(self):
+        # reference values: 29.97 drop-frame skips frame labels ;00 and ;01 each minute except every 10th
+        for tc, frames in (("00:01:00;02", 1800), ("00:10:00;00", 17982), ("01:00:00;00", 107892)):
+            self.assertEqual(edit_doc.tc_to_frames(tc, 29.97), frames)
+            self.assertEqual(edit_doc.frames_to_tc(frames, 29.97, drop_frame=True), tc)
+
+    def test_drop_frame_source_in_exports(self):
+        analyses = fake_analyses()
+        analyses[VIDEO]["info"]["start_timecode"] = "01:00:00;00"  # a Sony camera at 29.97
+        e = edit_doc.build("DF", PLAN, analyses)
+        self.assertTrue(e["sources"]["s1"]["drop_frame"])
+        tmp = tempfile.mkdtemp()
+        with open(exporters.export(e, "edl", os.path.join(tmp, "cut"))) as f:
+            self.assertIn("01:00:01;00 01:00:04;00", f.read())  # 107892 + 30 frames, in drop-frame labels
+        clip = ET.parse(exporters.export(e, "fcp", os.path.join(tmp, "cut"))).getroot().find(".//spine/asset-clip")
+        self.assertEqual(clip.get("tcFormat"), "DF")
+
     def test_clips_follow_each_other_on_the_timeline(self):
         e = sample_edit()
         self.assertEqual([(c["rec_in"], c["rec_out"]) for c in e["clips"]], [(0, 90), (90, 150)])
@@ -221,6 +238,50 @@ class EditTests(unittest.TestCase):
         self.assertAlmostEqual(t["words"][1]["start"], 90 / 29.97 + 10.2 - 300 / 29.97, places=2)
         self.assertEqual([ln["text"] for ln in t["hinglish"]], ["namaste", "doston."])  # 2.7 s apart: two lines
         self.assertEqual(t["english"][0]["text"], "hello there")
+
+
+class MediaTests(unittest.TestCase):
+    @staticmethod
+    def probe(video: dict = None, audio: bool = True, duration: str = "10.0") -> dict:
+        streams = ([dict({"codec_type": "video", "width": 1920, "height": 1080, "r_frame_rate": "30/1",
+                          "avg_frame_rate": "30/1"}, **(video or {}))] if video is not None else [])
+        streams += [{"codec_type": "audio", "channels": 2, "sample_rate": "48000", "duration": "12.5"}] if audio else []
+        return media.describe({"streams": streams, "format": {"duration": duration} if duration else {}}, "/x/a.mov")
+
+    def test_phone_video_recorded_upright(self):
+        new = self.probe({"side_data_list": [{"side_data_type": "Display Matrix", "rotation": -90}]})
+        old = self.probe({"tags": {"rotate": "90"}})
+        self.assertEqual([(i["width"], i["height"]) for i in (new, old)], [(1080, 1920), (1080, 1920)])
+
+    def test_nonsense_frame_rate_falls_back_to_the_average(self):
+        self.assertAlmostEqual(self.probe({"r_frame_rate": "90000/1", "avg_frame_rate": "30000/1001"})["fps"], 29.97, 2)
+
+    def test_missing_duration_uses_the_longest_stream(self):
+        self.assertEqual(self.probe({}, duration="")["duration"], 12.5)
+
+    def test_cover_art_and_no_sound(self):
+        art = self.probe({"disposition": {"attached_pic": 1}})
+        silent = self.probe({}, audio=False)
+        self.assertFalse(art["has_video"])
+        self.assertEqual((silent["audio_streams"], silent["audio_channels"]), (0, 0))
+
+
+class PlanTests(unittest.TestCase):
+    """Clips nothing can be judged in stay whole instead of vanishing from the cut."""
+
+    def plan(self, analysis):
+        return pipeline.plan_for_sources([{"path": "/x.mov", "fps": 25.0, "start_sec": 2.0, "end_sec": 6.0}],
+                                         {"/x.mov": analysis}, {})
+
+    def test_clip_without_sound_is_kept_whole(self):
+        info = {"path": "/x.mov", "duration": 10.0, "fps": 25.0, "has_video": True, "audio_streams": 0}
+        res = self.plan(pipeline.silent_analysis(info))
+        self.assertEqual([(c["src_in"], c["src_out"], c["status"]) for c in res["plan"]], [(50, 150, "keep")])
+
+    def test_clip_without_speech_is_kept_whole(self):
+        analysis = {"info": {"duration": 10.0, "fps": 25.0}, "_env": flat_env(10, []), "phrases": [], "decisions": [],
+                    "regions": []}
+        self.assertEqual(len(self.plan(analysis)["plan"]), 1)
 
 
 class ExportTests(unittest.TestCase):
@@ -288,6 +349,26 @@ class VideoExportTests(unittest.TestCase):
         lengths = {kind: float(sec) for kind, sec in (line.split(",") for line in probe)}
         self.assertAlmostEqual(lengths["video"], 2.4, delta=0.05)  # 25 + 35 frames
         self.assertAlmostEqual(lengths["audio"], lengths["video"], delta=0.03)
+
+    def test_phone_video_recorded_upright_stays_upright(self):
+        import subprocess
+        ffmpeg, tmp = paths.find_program("ffmpeg"), tempfile.mkdtemp()
+        plain, rotated = os.path.join(tmp, "plain.mp4"), os.path.join(tmp, "rotated.mp4")
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-f", "lavfi",
+                        "-i", "sine=sample_rate=48000", "-t", "2", "-pix_fmt", "yuv420p", "-shortest", plain], check=True)
+        if subprocess.run([ffmpeg, "-v", "error", "-y", "-display_rotation", "90", "-i", plain, "-c", "copy",
+                           rotated]).returncode != 0:
+            self.skipTest("this ffmpeg can't write rotation metadata")
+        info = media.probe(rotated)
+        self.assertEqual((info["width"], info["height"]), (240, 320))
+        analyses = {rotated: {"path": rotated, "name": "rotated.mp4", "language": "en", "translated": False, "info": info}}
+        plan = [{"path": rotated, "src_fps": 25.0, "src_in": 0, "src_out": 50, "status": "keep", "reasons": []}]
+        out = exporters.video.write(edit_doc.build("up", plan, analyses), os.path.join(tmp, "up.mp4"))
+        self.assertEqual((media.probe(out)["width"], media.probe(out)["height"]), (240, 320))
+
+    def test_nothing_to_export(self):
+        with self.assertRaises(RuntimeError):
+            exporters.video.write(edit_doc.build("empty", [], fake_analyses()), os.path.join(tempfile.mkdtemp(), "x.mp4"))
 
 
 class TranslitTests(unittest.TestCase):
@@ -378,6 +459,39 @@ class ScriptModeTests(unittest.TestCase):
         later = next(d for d in a["decisions"] if d["id"] == "p0002")
         self.assertLess(later["confidence"], 0.75)  # weaker, but later: brown at most, never cut
 
+    @staticmethod
+    def run_script(script: str, said: list) -> dict:
+        """said: [(start, text)] -> confidence per phrase id after script mode."""
+        words, phrases = [], []
+        for i, (t0, text_) in enumerate(said):
+            ws = spoken(text_, t0)
+            words += ws
+            phrases.append({"id": f"p{i + 1:04d}", "start": ws[0]["start"], "end": ws[-1]["end"], "text": text_,
+                            "p": 0.9, "flags": []})
+        a = {"path": "/x", "name": "x", "language": "hi", "translated": False, "info": {"duration": said[-1][0] + 30},
+             "phrases": phrases, "decisions": [], "_words": words}
+        scriptmatch.apply([{"path": "/x", "start_sec": 0, "end_sec": None}], {"/x": a}, script)
+        return {d["id"]: d["confidence"] for d in a["decisions"] if d["kind"] == "phrase"}
+
+    def test_a_different_sentence_is_not_a_take(self):
+        line = scriptmatch.split_lines("aur agar aapko ye video pasand aaya to like karo.")[0]["toks"]
+        other = text.tokens("aur agar aapko kuch bhi doubt hai to comment karo")
+        self.assertIsNone(scriptmatch._best_take(line, other, scriptmatch._Similar()))
+
+    def test_a_line_the_script_repeats_is_never_cut(self):
+        conf = self.run_script("Chalo dosto aaj naya video banate hain.\nKuch aur baatein.\nChalo dosto aaj naya video banate hain.",
+                               [(0, "chalo dosto aaj naya video banate hain"), (60, "chalo dosto aaj naya video banate hain")])
+        self.assertEqual(list(conf.values()), [0.0, 0.0])
+
+    def test_a_short_line_cuts_nothing(self):
+        conf = self.run_script("Thank you.", [(0, "thank you"), (30, "thank you")])
+        self.assertTrue(all(c < 0.75 for c in conf.values()))
+
+    def test_words_in_the_same_breath_as_a_kept_take_are_not_cut(self):
+        conf = self.run_script("Description mein aapko saare assets mil jayenge.",
+                               [(0, "description mein aapko saare assets mil jayenge to aap wo bhi kar sakte hain")])
+        self.assertLess(conf["p0001"], 0.75)
+
     def test_lines_split_at_sentence_ends(self):
         self.assertEqual(len(scriptmatch.split_lines("Hello there. How are you?\nठीक है। चलो")), 4)
 
@@ -395,6 +509,75 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(p.public()["steps"][0]["flag"], "2 to check")
         p.approved = True
         self.assertEqual(p.public()["steps"][0]["flag"], "")
+
+
+class OutputTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.video = os.path.join(self.dir, "raw.mov")
+        open(self.video, "w").close()
+        self.p = Project("file", self.video)
+        self.p.analyses, self.p.timeline_name = {self.video: {}}, "raw"
+
+    def test_never_overwrites(self):
+        first = self.p.output_path("My Cut", ".mp4")
+        open(first, "w").close()
+        self.assertEqual(os.path.basename(self.p.output_path("My Cut", ".mp4")), "My Cut 2.mp4")
+
+    def test_names_windows_accepts(self):
+        self.assertEqual(os.path.basename(self.p.output_path('a:b/c?d. ', ".xml")), "abcd.xml")
+
+    @unittest.skipIf(paths.IS_WINDOWS or os.geteuid() == 0, "folder permissions work differently here")
+    def test_read_only_folder_falls_back(self):
+        fallback = tempfile.mkdtemp()
+        saved, paths.output_dir = paths.output_dir, lambda: fallback
+        os.chmod(self.dir, 0o555)
+        try:
+            self.assertEqual(os.path.dirname(self.p.output_path("cut", ".mp4")), fallback)
+        finally:
+            os.chmod(self.dir, 0o755)
+            paths.output_dir = saved
+
+    def test_nothing_to_export(self):
+        self.p.result = {"plan": []}
+        with self.assertRaises(RuntimeError):
+            self.p.require_clips()
+
+
+class ServerTests(unittest.TestCase):
+    """The local server only answers this computer, and only takes commands from its own page."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from http.server import ThreadingHTTPServer
+        sys.path.insert(0, os.path.join(ROOT, "web"))
+        import server
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def ask(self, method: str, path: str, host: str = "", headers: dict = None) -> int:
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request(method, path, body=b"{}" if method == "POST" else None,
+                     headers=dict({"Host": host or f"127.0.0.1:{self.port}", "Content-Type": "application/json"},
+                                  **(headers or {})))
+        status = conn.getresponse().status
+        conn.close()
+        return status
+
+    def test_page_answers_this_computer_only(self):
+        self.assertEqual(self.ask("GET", "/"), 200)
+        self.assertEqual(self.ask("GET", "/", host=f"evil.example:{self.port}"), 403)
+
+    def test_commands_need_the_page_header(self):
+        self.assertEqual(self.ask("POST", "/api/job/none/bulk"), 403)
+        self.assertEqual(self.ask("POST", "/api/job/none/bulk", headers={"X-ScriptCutter": "1"}), 409)
 
 
 class LLMParse(unittest.TestCase):
@@ -423,6 +606,55 @@ class BridgeTests(unittest.TestCase):
 
     def test_unknown_program_is_empty(self):
         self.assertEqual(paths.find_program("no-such-program-xyz"), "")
+
+
+class DownloadTests(unittest.TestCase):
+    """The two downloads that tools/build_release.py makes for the website's Mac and Windows buttons."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import build_release
+        cls.out = tempfile.mkdtemp()
+        build_release.build(cls.out)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.out, ignore_errors=True)
+
+    def entries(self, name):
+        import zipfile
+        with zipfile.ZipFile(os.path.join(self.out, name)) as z:
+            return {i.filename: (i.external_attr >> 16, z.read(i)) for i in z.infolist()}
+
+    def test_mac_download(self):
+        files = self.entries("ScriptCutter-Mac.zip")
+        mode, _ = files["ScriptCutter/Install ScriptCutter.command"]
+        import stat
+        self.assertTrue(stat.S_ISREG(mode) and mode & 0o100)  # macOS's unzip keeps "can run" only for typed entries
+        for needed in ("ScriptCutter/Read me.txt", "ScriptCutter/app/install.sh", "ScriptCutter/app/install.py",
+                       "ScriptCutter/app/launcher.py", "ScriptCutter/app/assets/ScriptCutter.icns"):
+            self.assertIn(needed, files)
+        self.assertFalse([f for f in files if f.endswith((".bat", ".ps1", ".ico")) or "/tests/" in f])
+
+    def test_windows_download(self):
+        files = self.entries("ScriptCutter-Windows.zip")
+        _, bat = files["ScriptCutter/Install ScriptCutter.bat"]
+        self.assertIn(b"\r\n", bat)
+        self.assertNotIn(b"\n", bat.replace(b"\r\n", b""))  # cmd.exe needs CRLF everywhere
+        _, ps1 = files["ScriptCutter/app/install.ps1"]
+        self.assertTrue(all(b < 128 for b in ps1))  # Windows PowerShell reads files without a BOM as ANSI
+        for needed in ("ScriptCutter/Read me.txt", "ScriptCutter/app/install.py", "ScriptCutter/app/assets/ScriptCutter.ico"):
+            self.assertIn(needed, files)
+        self.assertFalse([f for f in files if f.endswith((".command", ".sh", ".icns")) or "/tests/" in f])
+
+    def test_installer_ships_everything_the_app_needs(self):
+        import install
+        for item in install.APP_FILES:
+            self.assertTrue(os.path.exists(os.path.join(ROOT, item)), item)
+        files = self.entries("ScriptCutter-Mac.zip")
+        self.assertIn("ScriptCutter/app/web/static/js/app.js", files)
+        self.assertIn("ScriptCutter/app/resolve/ScriptCutter.lua.template", files)
 
 
 @unittest.skipUnless(shutil.which("say") and (shutil.which("whisper-cli") or os.path.exists("/opt/homebrew/bin/whisper-cli")),

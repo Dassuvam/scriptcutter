@@ -30,9 +30,15 @@ resolve/
   *.lua.template          the Workspace > Scripts > ScriptCutter menu entry (filled in by install.py)
 web/server.py           local web app + JSON API (http://127.0.0.1:7870)
 web/static/             index.html, css/theme.css (all colours/fonts), css/app.css, js/app.js
-install.py              cross-platform installer: programs, models, Resolve menu, self-test
-install.sh / .ps1       macOS / Windows wrappers that install ffmpeg + whisper.cpp first
-tools/build_release.py  builds dist/ScriptCutter.zip
+install.py              cross-platform installer: copies the app into place, programs, models, Resolve
+                        menu, ScriptCutter.app / Start menu + Settings > Apps, a speech check, opens the app
+uninstall.py            removes everything install.py added
+Mac/                    the Mac download's own files: Install / Uninstall ScriptCutter.command, install.sh
+                        (Command Line Tools, Homebrew, ffmpeg, whisper.cpp; also the one-line online install)
+Windows/                the Windows download's own files: Install / Uninstall ScriptCutter.bat, install.ps1
+                        (Python, ffmpeg, whisper.cpp incl. the NVIDIA build, for this user, no admin)
+assets/                 app icons (.icns, .ico, .png), drawn by tools/make_icons.py
+tools/build_release.py  builds dist/ScriptCutter-Mac.zip and dist/ScriptCutter-Windows.zip
 tests/                  python3 tests/test_scriptcutter.py
 ```
 
@@ -74,35 +80,69 @@ The bridge folder is `<app data>/bridge` (`paths.bridge_dir()`). Things learned 
 - Media-pool handles fetched before `CreateEmptyTimeline` are rejected afterwards; look them up again.
 - For NTSC sources (29.97) Resolve reports source frames in the conformed integer rate.
 
-## Run and test
+## Install, run and test
+
+What a user downloads and what happens:
+
+```
+ScriptCutter-Mac.zip / ScriptCutter-Windows.zip
+  ScriptCutter/
+    Install ScriptCutter     .command (Mac/) or .bat (Windows/)
+    Uninstall ScriptCutter
+    Read me.txt              Mac/README.md or Windows/README.md
+    app/                     install.APP_FILES + install.sh or install.ps1
+```
+
+"Install ScriptCutter" runs app/install.sh or app/install.ps1 (system programs), then install.py, which
+copies app/ to `paths.app_dir()` (Mac: `~/Library/Application Support/ScriptCutter/App`, Windows:
+`%LOCALAPPDATA%\ScriptCutter\App`). Everything else points there: the Resolve menu entry, ScriptCutter.app
+(`~/Applications`), the Start menu and desktop shortcuts and the Settings > Apps entry. The downloaded
+folder can be deleted. On Windows with an NVIDIA card, install.ps1 also downloads the CUDA build of
+whisper.cpp into `tools\whisper-cuda`; install.py switches to it (config.json `whisper_gpu`) only after it
+really ran on the card.
+
+Downloads from a browser are marked by the system, so the first double-click asks once (Gatekeeper's
+"Open Anyway", SmartScreen's "Run anyway"); avoiding that for good needs paid code signing (an Apple
+Developer ID with notarization, a Windows code-signing certificate). The one-line installs fetch the zip
+with curl / PowerShell, which do not mark files, so nothing asks:
+
+```bash
+curl -fsSL https://github.com/Dassuvam/scriptcutter/releases/latest/download/install-mac.sh | bash
+```
+```powershell
+irm https://github.com/Dassuvam/scriptcutter/releases/latest/download/install-windows.ps1 | iex
+```
+
+From the source code:
 
 ```bash
 python3 web/server.py                    # http://127.0.0.1:7870
+python3 install.py --here                # register this folder in Resolve instead of copying it
 python3 cli.py analyze --video clip.mp4  # decisions in the terminal
 python3 cli.py analyze --video clip.mp4 --xml cut.xml --srt cut.srt --view hinglish
 python3 tests/test_scriptcutter.py       # unit tests (+ an end-to-end test on macOS using `say`)
+python3 tools/build_release.py           # dist/: both downloads and the one-line installers
 ```
 
-GitHub Actions runs the tests on macOS and Windows for every push (`.github/workflows/tests.yml`).
+GitHub Actions runs the tests on macOS and Windows for every push (`tests.yml`), and installs both
+downloads on fresh Mac and Windows machines when an installer changes (`install.yml`).
 
 Conventions: standard library only; colours only in `theme.css`; OS-specific paths only in `paths.py`; Resolve calls only in `scriptcutter.lua`.
 
 ## Release
 
-1. Update `VERSION` and add a `## <version>` section to `CHANGELOG.md`.
-2. Commit, then tag and push: `git tag v3.1.0 && git push origin main v3.1.0`. (Push one tag at a time: GitHub skips tag events when more than three tags are pushed at once.)
-3. The `release` workflow runs the tests, builds `ScriptCutter.zip` and publishes a GitHub release with the changelog section as notes.
+1. Update `VERSION` and `cutter/__init__.py`, and add a `## <version>` section to `CHANGELOG.md`.
+2. Commit, then tag and push: `git tag v3.2.0 && git push origin main v3.2.0`. (Push one tag at a time: GitHub skips tag events when more than three tags are pushed at once.)
+3. The `release` workflow runs the tests, builds both downloads and publishes a GitHub release with the changelog section and the download links as notes.
 
-To build locally: `python3 tools/build_release.py` (creates `dist/`).
-
-**Permanent download link** (the repository must be public):
+**Permanent download links** (always the newest release; the repository must be public):
 ```
-https://github.com/<owner>/<repo>/releases/latest/download/ScriptCutter.zip
+https://github.com/Dassuvam/scriptcutter/releases/latest/download/ScriptCutter-Mac.zip
+https://github.com/Dassuvam/scriptcutter/releases/latest/download/ScriptCutter-Windows.zip
 ```
 
-**Website button:**
+**Website buttons:**
 ```html
-<a href="https://github.com/<owner>/<repo>/releases/latest/download/ScriptCutter.zip"
-   style="display:inline-block;padding:14px 28px;border-radius:999px;background:#d0402c;color:#fffaf2;
-          font:600 16px/1 'Avenir Next',sans-serif;text-decoration:none">Download ScriptCutter</a>
+<a href="https://github.com/Dassuvam/scriptcutter/releases/latest/download/ScriptCutter-Mac.zip">Download for Mac</a>
+<a href="https://github.com/Dassuvam/scriptcutter/releases/latest/download/ScriptCutter-Windows.zip">Download for Windows</a>
 ```

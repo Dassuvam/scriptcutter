@@ -98,6 +98,9 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 400; margin: 0; }
 .kicker::before { content: "● "; color: var(--accent); }
 .hint { font-size: var(--text-sm); color: var(--text-faint); margin-top: 6px; }
 .field-label { display: block; font-size: var(--text-sm); color: var(--text-muted); margin: 14px 0 6px; }
+.input-row { display: flex; gap: 8px; align-items: center; }
+.input-row input { flex: 1; min-width: 0; }
+.input-row .button { white-space: nowrap; }
 
 /* vertical label on the review card, like the book spine in the poster */
 .spine {
@@ -337,6 +340,7 @@ kbd { font: 11px var(--font-mono); border: 1px solid var(--rule); border-radius:
   border-bottom: 1px solid var(--rule);
 }
 .help-head h2 { font-size: 26px; }
+.help-version { font: 12px var(--font-body); color: var(--text-faint); margin-left: 6px; }
 .help-body { padding: 6px 26px 26px; }
 .help-body h3 { font-size: 20px; margin: 22px 0 8px; }
 .help-body h3::before { content: "● "; color: var(--accent); font-size: 12px; vertical-align: 3px; }

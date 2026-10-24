@@ -20,7 +20,7 @@ MAX_SHIFT = 0.2
 
 CATEGORIES = [
     ("Said again", "retake"), ("Sits inside a section", "block"), ("After a failed take", "block"),
-    ("Introduces a section", "block"), ("Right between", "block"), ("Restart cue", "cue"),
+    ("Introduces a section", "block"), ("Restart cue", "cue"),
     ("Contains a restart cue", "cue"), ("Filler", "filler"), ("Very short isolated", "stray"),
     ("Sound with no recognisable", "sound"), ("Short noise", "noise"), ("Non-speech sound", "noise"),
     ("unreliable", "loop"), ("talking but only", "sparse"), ("repeated line", "repeat_line"),
@@ -66,7 +66,7 @@ def shifts(data: dict = None) -> dict:
     for cat, c in data.items():
         n = c.get("kept", 0) + c.get("cut", 0)
         if n >= MIN_EXAMPLES:
-            out[cat] = round(max(-MAX_SHIFT, min(MAX_SHIFT, (c["cut"] / n - 0.5) * 0.4)), 3)
+            out[cat] = round(max(-MAX_SHIFT, min(MAX_SHIFT, (c.get("cut", 0) / n - 0.5) * 0.4)), 3)
     return out
 
 

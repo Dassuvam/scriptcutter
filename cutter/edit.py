@@ -1,11 +1,19 @@
 """
-The edit document: one plain-JSON description of the finished cut. Every output
-reads it (Premiere / Final Cut XML, EDL, transcript, JSON) and later engine
-steps extend it (captions, B-roll images, generated shots, music) by adding
-their own lists next to "clips".
+The edit document: one plain-JSON description of the finished cut. Every
+output reads it (MP4, Premiere / Final Cut XML, EDL, transcript, JSON) and
+later engine steps extend it (captions, B-roll images, generated shots, music)
+by adding their own lists next to "clips".
 
 Times are frames: "rec" on the new timeline (at edit["rate"]), "src" in each
 source (at that source's own rate). The transcript uses timeline seconds.
+
+    {
+      "name": "...", "rate": {...}, "fps": 29.97, "width": 1920, "height": 1080, "duration": frames,
+      "sources": {"s1": {"path", "fps", "frames", "start_tc", "start_frame", "drop_frame", ...}},
+      "clips":   [{"source": "s1", "src_in", "src_out", "rec_in", "rec_out", "status", "reasons", "text"}],
+      "markers": [{"frame", "duration", "name", "note", "color"}],      # one per brown clip
+      "transcript": {"script", "words", "lines", "hinglish", "english"},
+    }
 """
 from __future__ import annotations
 
@@ -16,12 +24,17 @@ from .translit import has_devanagari, to_hinglish
 
 VERSION = 1
 LINE_CHARS = 42      # subtitle line length
-LINE_SECONDS = 5.0
+LINE_SECONDS = 5.0   # longest subtitle line
 LINE_GAP = 0.7       # a pause this long starts a new subtitle line
 
 
+# --------------------------------------------------------------------------- frame rates and timecode
 def rate(fps: float) -> dict:
-    """Frame rate as editors store it: integer timebase + NTSC flag, frame duration num/den seconds."""
+    """
+    A frame rate the way editors store it: an integer timebase plus an NTSC flag
+    (29.97 = timebase 30, NTSC), and the length of one frame as num/den seconds
+    (29.97: 1001/30000 s). Rates within 0.01 of a standard one are snapped to it.
+    """
     fps = float(fps or 25.0)
     base = int(round(fps))
     if abs(fps - base) > 0.005 and abs(fps * 1.001 - round(fps * 1.001)) < 0.01:
@@ -30,23 +43,47 @@ def rate(fps: float) -> dict:
     return {"fps": float(base), "timebase": base, "ntsc": False, "num": 1, "den": base}
 
 
+def _dropped_per_minute(base: int) -> int:
+    """Drop-frame timecode skips 2 frame numbers a minute at 29.97 and 4 at 59.94 (not every 10th minute)."""
+    return 2 if base == 30 else 4 if base == 60 else 0
+
+
 def tc_to_frames(tc: str, fps: float) -> int:
+    """
+    'HH:MM:SS:FF' -> frame count. 'HH:MM:SS;FF' is drop-frame timecode, whose
+    labels skip some frame numbers so the clock stays in step with real time.
+    """
     base = int(round(fps))
     try:
-        hh, mm, ss, ff = [int(x) for x in tc.replace(";", ":").split(":")]
+        hh, mm, ss, ff = [int(x) for x in tc.replace(";", ":").replace(".", ":").split(":")]
     except ValueError:
         return 0
-    return ((hh * 60 + mm) * 60 + ss) * base + ff
+    frames = ((hh * 60 + mm) * 60 + ss) * base + ff
+    drop = _dropped_per_minute(base) if ";" in tc else 0
+    if drop:
+        minutes = hh * 60 + mm
+        frames -= drop * (minutes - minutes // 10)
+    return frames
 
 
-def frames_to_tc(frames: int, fps: float) -> str:
+def frames_to_tc(frames: int, fps: float, drop_frame: bool = False) -> str:
+    """Frame count -> 'HH:MM:SS:FF', or 'HH:MM:SS;FF' for drop-frame timecode."""
     base = int(round(fps)) or 25
     frames = max(0, int(frames))
+    drop = _dropped_per_minute(base) if drop_frame else 0
+    if drop:  # put the skipped labels back in, then count like normal timecode
+        per_10_minutes = base * 600 - drop * 9
+        per_minute = base * 60 - drop
+        tens, rest = divmod(frames, per_10_minutes)
+        frames += drop * 9 * tens + (drop * ((rest - drop) // per_minute) if rest > drop else 0)
     s = frames // base
-    return f"{s // 3600:02d}:{(s // 60) % 60:02d}:{s % 60:02d}:{frames % base:02d}"
+    sep = ";" if drop else ":"
+    return f"{s // 3600:02d}:{(s // 60) % 60:02d}:{s % 60:02d}{sep}{frames % base:02d}"
 
 
+# --------------------------------------------------------------------------- transcript of the cut
 def _lines(words: list, key: str) -> list:
+    """Group timed words into subtitle lines: break at long pauses, sentence ends and LINE_CHARS."""
     lines, cur = [], []
 
     def close():
@@ -62,7 +99,7 @@ def _lines(words: list, key: str) -> list:
         if w[key].endswith((".", "?", "!", "।")):
             close()
     close()
-    for a, b in zip(lines, lines[1:]):  # hold short lines on screen a little longer
+    for a, b in zip(lines, lines[1:]):  # keep a short line on screen for at least a second
         a["end"] = round(min(max(a["end"], a["start"] + 1.0), b["start"]), 3)
     if lines:
         lines[-1]["end"] = round(max(lines[-1]["end"], lines[-1]["start"] + 1.0), 3)
@@ -70,17 +107,21 @@ def _lines(words: list, key: str) -> list:
 
 
 def transcript(clips: list, sources: dict, words_by_path: dict, fps: float) -> dict:
-    """What is said in the final cut, on the timeline clock, in the spoken language (+ Hinglish)."""
+    """
+    What is said in the final cut, on the timeline clock: every spoken word whose
+    middle lies inside a kept clip, shifted to where that clip sits on the new
+    timeline. Also in Hinglish (for Hindi) and as the English translation.
+    """
     words, english = [], []
     starts = {p: [w["start"] for w in ws] for p, ws in words_by_path.items() if ws is not None}
     for i, c in enumerate(clips):
         src = sources[c["source"]]
-        s0, s1 = c["src_in"] / src["fps"], c["src_out"] / src["fps"]
-        t0 = c["rec_in"] / fps
+        s0, s1 = c["src_in"] / src["fps"], c["src_out"] / src["fps"]  # clip in source seconds
+        t0 = c["rec_in"] / fps  # where the clip starts on the new timeline
         if src.get("translated") and c["text"]:
             english.append({"start": round(t0, 3), "end": round(c["rec_out"] / fps, 3), "text": c["text"]})
         found = words_by_path.get(src["path"])
-        if found is None:  # no word timings: the clip's own text, as one line
+        if found is None:  # no word timings for this source: the clip's own text, as one line
             if c["text"]:
                 words.append({"text": c["text"], "start": round(t0, 3), "end": round(c["rec_out"] / fps, 3), "clip": i})
             continue
@@ -103,8 +144,13 @@ def transcript(clips: list, sources: dict, words_by_path: dict, fps: float) -> d
     }
 
 
+# --------------------------------------------------------------------------- the document
 def build(name: str, plan: list, analyses: dict, timeline_fps: float = 0.0, words_by_path: dict = None) -> dict:
-    """plan: clips from pipeline.plan_for_sources(); analyses: path -> pipeline.analyze_file() result."""
+    """
+    plan: clips from pipeline.plan_for_sources() (source frames at each source's rate)
+    analyses: path -> pipeline.analyze_file() result
+    timeline_fps: the rate of the new timeline; 0 = the rate of the first clip's source
+    """
     words_by_path = words_by_path or {}
     first = analyses[plan[0]["path"]]["info"] if plan else next(iter(analyses.values()))["info"]
     r = rate(timeline_fps or first["fps"] or 25.0)
@@ -116,15 +162,16 @@ def build(name: str, plan: list, analyses: dict, timeline_fps: float = 0.0, word
         sources[sid] = {
             "path": path, "name": os.path.basename(path), "rate": sr, "fps": sr["fps"],
             "frames": int(round(info["duration"] * sr["fps"])), "start_tc": info["start_timecode"],
-            "start_frame": tc_to_frames(info["start_timecode"], sr["fps"]), "has_video": info["has_video"],
-            "width": info.get("width") or 1920, "height": info.get("height") or 1080,
+            "start_frame": tc_to_frames(info["start_timecode"], sr["fps"]),
+            "drop_frame": ";" in info["start_timecode"] and sr["ntsc"],
+            "has_video": info["has_video"], "width": info.get("width") or 1920, "height": info.get("height") or 1080,
             "audio_channels": info.get("audio_channels", 2), "sample_rate": info.get("sample_rate", 48000),
-            "language": a["language"], "translated": a["translated"],
+            "language": a.get("language", ""), "translated": a.get("translated", False),
         }
     clips, markers, rec = [], [], 0
     for c in plan:
         src = sources[ids[c["path"]]]
-        dur = max(1, int(round((c["src_out"] - c["src_in"]) * r["fps"] / src["fps"])))
+        dur = max(1, int(round((c["src_out"] - c["src_in"]) * r["fps"] / src["fps"])))  # length on the new timeline
         clips.append({"source": ids[c["path"]], "src_in": c["src_in"], "src_out": c["src_out"],
                       "rec_in": rec, "rec_out": rec + dur, "status": c["status"],
                       "reasons": list(c.get("reasons", [])), "text": c.get("text", "")})

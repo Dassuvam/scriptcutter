@@ -1,8 +1,17 @@
 """
 FCPXML 1.9: what Final Cut Pro imports with File > Import > XML. DaVinci
 Resolve reads it too.
-Limits: one storyline; FCPXML has no clip colours, so brown clips get a to-do
-marker with the reason instead.
+
+Shape of the file:
+
+    <fcpxml><resources>  <format> per frame size / rate, <asset> per source file (with <media-rep src=...>)
+            <library><event><project><sequence><spine>
+                asset-clip, asset-clip, ...     the cut, one after another
+
+Times are rational seconds on the frame grid ("3003/30000s" = 90 frames at
+29.97). An asset's "start" is the source's first timecode, so a clip's "start"
+is that plus its in-point. FCPXML has no clip colours: brown clips get a to-do
+marker (completed="0") with the reason instead.
 """
 from __future__ import annotations
 
@@ -15,7 +24,7 @@ from .fcp7 import _sub
 
 
 def _t(frames: int, r: dict) -> str:
-    """Rational seconds on the frame grid, e.g. 3003/30000s."""
+    """Frames -> reduced rational seconds, e.g. 90 frames at 29.97 -> '3003/1000s'."""
     if not frames:
         return "0s"
     n, d = frames * r["num"], r["den"]
@@ -25,6 +34,7 @@ def _t(frames: int, r: dict) -> str:
 
 
 def _url(path: str) -> str:
+    """file:///Users/me/My%20Video.mov (Windows: file:///C:/Users/...)."""
     p = path.replace("\\", "/")
     return "file://" + urllib.parse.quote(p if p.startswith("/") else "/" + p, safe="/:")
 
@@ -36,6 +46,7 @@ def write(edit: dict, path: str, view: str = "original") -> str:
     formats = {}
 
     def format_id(rr: dict, width: int, height: int) -> str:
+        """One <format> per frame rate + size, created the first time it is needed."""
         key = (rr["num"], rr["den"], width, height)
         if key not in formats:
             formats[key] = f"r{len(formats) + 1}"
@@ -62,10 +73,11 @@ def write(edit: dict, path: str, view: str = "original") -> str:
     spine = _sub(sequence, "spine")
     for c in edit["clips"]:
         src = edit["sources"][c["source"]]
-        start = _t(src["start_frame"] + c["src_in"], src["rate"])
+        start = _t(src["start_frame"] + c["src_in"], src["rate"])  # source timecode of the in-point
         duration = _t(c["rec_out"] - c["rec_in"], r)
         clip = _sub(spine, "asset-clip", ref=c["source"], offset=_t(c["rec_in"], r),
-                    name=os.path.splitext(src["name"])[0], start=start, duration=duration, tcFormat="NDF")
+                    name=os.path.splitext(src["name"])[0], start=start, duration=duration,
+                    tcFormat="DF" if src["drop_frame"] else "NDF")
         if c["status"] == "review":
             _sub(clip, "marker", start=start, duration=duration,
                  value=("Check: " + "; ".join(c["reasons"]))[:240], completed=0)
