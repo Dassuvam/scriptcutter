@@ -9,6 +9,7 @@ cutter/                 the engine
   project.py              Project + Steps: cut -> script (background) -> outputs; each step can raise a flag
   edit.py                 the edit document every output reads (clips, markers, transcript)
   exporters/              one module per output format: fcp7 (Premiere XML), fcpxml (Final Cut), edl, transcript
+  restarts.py             restarts in the timed spoken-language words (also inside Whisper's long sentences)
   translit.py             Hindi (Devanagari) -> Hinglish, offline
   paths.py                every OS-specific folder and program lookup (start here when porting)
   media.py                ffprobe / ffmpeg: probe, extract 16 kHz audio, screen-motion scan; per-file cache
@@ -40,9 +41,13 @@ tests/                  python3 tests/test_scriptcutter.py
 3. **Words:** `transcribe.py` sends speech to whisper-cli in chunks of at most 24 s, each decoded independently (no text context between chunks). That stops repetition loops and timestamp drift on long files. Non-English speech is analysed through Whisper's English translation: repeated takes translate to near-identical sentences, and it is far more stable than decoding Devanagari with small models. Hallucinations ("Thank you for watching" over typing, machine-regular repeats) are filtered in `clean_segments`.
 4. **Decisions:** `analyze.py` compares each phrase with the next ~2 minutes. The last complete take wins; re-recorded blocks, restart cues, fillers and mid-line restarts are detected. Each decision gets a removal confidence. `apply_policy` maps it to remove / review (Brown) / keep (Blue) using the Cautious / Balanced / Aggressive thresholds. The AI reviewer may only confirm or dispute; AI-only flags are capped at review.
 5. **Clips:** `cuts.py` turns decisions into clips: padding is fenced so it never leaks into a removed take, pauses up to `max_pause` are kept, and review items are always separate clips.
-6. **Script:** for non-English speech the analysis runs on the English translation. Afterwards the `script` step transcribes once more in the spoken language (word timings, Hindi letters) in the background; `translit.py` turns it into Hinglish. The review and the final transcript use these words.
+6. **Spoken-language words:** for non-English speech, retakes are matched on the English translation, which has no word timings and often glues two takes into one sentence. So the file is transcribed once more in the spoken language (turbo model, cached). `restarts.py` splits those timed words into attempts at pauses and compares them in Hinglish letters (`translit.py`), so वीडियो and "video" match: a dropped attempt, the end of a line that the next one starts again, a restart without a pause, a scrap before a restart, and (brown only) a line begun again up to 25 s later. A first attempt that says something the redo doesn't repeat is not a restart. The same words feed the review's हिंदी / Hinglish view and the final transcript. (If this pass is switched off with `use_words`, the `script` step writes the words in the background instead.)
 7. **Outputs:** `Project.edit()` builds the edit document (`edit.py`): clips in timeline and source frames, markers for brown clips, and the transcript of the final cut on the timeline clock. Every format in `exporters/` reads only this document.
 8. **Resolve:** `resolve_bridge.py` writes the plan as a Lua table (`bridge/plan.lua`); `resolve/scriptcutter.lua` builds the timeline, places one clip per call, colours clips Blue/Brown and adds Cocoa markers.
+
+## Measuring accuracy
+
+Test changes to the analysis on real footage with a hand edit to compare against: cut the raw timeline with ScriptCutter only (no AI provider, Balanced), export both timelines as FCP7 XML from Resolve, and score every spoken word: kept or cut the way the editor did, brown (kept, flagged), wrongly cut, or missed. Wrongly cut words must stay at zero; brown is the safe answer when unsure. A hand edit also contains editorial choices (dropping a line that is not a retake), so separate those when reading the score.
 
 ## Growing the engine
 

@@ -1,9 +1,11 @@
 # Changelog
 
 ## 3.1.0
+- **More accurate on Hindi and Hinglish:** ScriptCutter now also reads the timed words in the spoken language and finds restarts inside Whisper's long sentences ("mere ko jo sabse badi… aur mere ko jo poochh sabse accha lagega"), including the end of a line that the next line starts again and short scraps before a restart. Sentences that only start the same way ("agar aapko ye video pasand aaya…" / "…pasand nahi aaya…") are left alone. On a real 2.6-minute Hindi recording, agreement with a hand edit rose from 66% to 75% of the time (77% of words handled safely), with no wrongly cut lines.
+- Fixed: a brown part inside a sentence no longer turns the whole sentence brown.
 - **Premiere Pro, Final Cut Pro and other editors:** pick your app in the bottom bar and press Save. ScriptCutter writes a Premiere Pro XML, a Final Cut Pro FCPXML or an EDL next to your video. Brown parts get a marker with the reason (and an orange label in Premiere). One video track; A/B overlap and Voice Isolation stay Resolve-only.
 - **Transcript of the final cut:** the new Transcript button shows what is said in the finished cut, ready to copy, and saves a text file, subtitles (.srt) and an edit-data file (.json) for automation.
-- **हिंदी / Hinglish / English switch:** for Hindi videos the review shows the words in Hindi letters, in Hinglish (Hindi in English letters, like a chat) or as the English translation. The Hindi words are written in the background after the cut, so the review opens as fast as before.
+- **हिंदी / Hinglish / English switch:** for Hindi videos the review shows the words in Hindi letters, in Hinglish (Hindi in English letters, like a chat) or as the English translation.
 - **Steps with flags:** the top of the review shows each step of the work, with ✓ when done and ⚑ when it needs your eyes. The engine behind it (`cutter/project.py`) is ready for new steps such as captions, B-roll images and generated shots.
 - "Show file" opens Finder / Explorer at a saved file. A double-click no longer closes the Help window right after opening it.
 - Developers: one edit document (`cutter/edit.py`) feeds every output; formats live in `cutter/exporters/`. The command line gained `--xml`, `--fcpxml`, `--srt`, `--transcript` and `--view`.

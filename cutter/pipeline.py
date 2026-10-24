@@ -4,10 +4,11 @@ Source file -> analysis -> clip plan.
 Audio, transcript, voice and screen-motion results are cached per file, so
 changing the policy, padding or your own choices re-cuts instantly.
 
-Two transcripts can exist per file: the one the cut is analysed from (for
-non-English speech usually Whisper's English translation) and the words in the
-spoken language (`original_words`), which the review and the final transcript
-show. When the analysis already ran in the spoken language they are the same.
+Two transcripts can exist per file: the one retakes are matched on (for
+non-English speech usually Whisper's English translation) and the timed words
+in the spoken language. Those words find restarts inside Whisper's sentences
+(restarts.py) and are what the review and the final transcript show. When the
+analysis runs in the spoken language they are the same.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import json
 import os
 import threading
 import time
+from bisect import bisect_left
 
 from . import learn, llm, vad
 from .analyze import analyze, apply_policy, build_phrases, find_untranscribed, POLICIES
@@ -40,6 +42,7 @@ DEFAULT_SETTINGS = {
     "topic": "",
     "use_vad": True,            # Silero voice detection when installed
     "learn": True,              # apply what was learned from your past choices
+    "use_words": True,          # translated analysis: also read the spoken-language words (restarts, Hindi text)
 }
 
 # one Whisper at a time: two large models at once can run a laptop out of memory
@@ -49,8 +52,8 @@ WHISPER_LOCK = threading.Lock()
 class Reporter:
     """Progress sink. Stages have weights so the bar moves sensibly on long files."""
 
-    STAGES = [("audio", 4), ("levels", 2), ("language", 4), ("transcribe", 60), ("analyse", 4),
-              ("video", 10), ("ai", 16)]
+    STAGES = [("audio", 4), ("levels", 2), ("language", 4), ("transcribe", 45), ("words", 25), ("analyse", 4),
+              ("video", 6), ("ai", 10)]
 
     def __init__(self, on_update=None):
         self.on_update = on_update
@@ -128,6 +131,18 @@ def words_from_segments(segments: list) -> list:
         else:
             out.append({"w": seg["text"], "start": seg["start"], "end": seg["end"]})
     return out
+
+
+def _spoken_words(path: str, lang: str, model_request: str, sens: float, voice_used: bool, wav: str, loose: list,
+                  env, regions: list, progress=None, log=print, use_cache: bool = True) -> list:
+    model = pick_model(model_request, translate=False, language=lang)
+    tpath = os.path.join(cache_dir_for(path), _transcript_key(model, lang, False, sens, voice_used))
+    tr = _load_json(tpath) if use_cache else None
+    if not tr:
+        log(f"{os.path.basename(path)}: reading the {lang} words with {os.path.basename(model)}")
+        tr = _transcribe(log, wav, loose, env.duration, env, model, lang, False, progress=progress)
+        _save_json(tpath, tr)
+    return words_from_segments(clean_segments(tr["raw"], regions))
 
 
 def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: bool = True) -> dict:
@@ -229,9 +244,23 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
     rep.log(f"{len(segs)} phrases transcribed"
             + (f" ({sum(1 for x in segs if 'loop' in x.get('flags', []))} unreliable)" if segs else ""))
 
+    # timed words in the spoken language: restarts inside Whisper's sentences, the review, the transcript
+    words = None if translate else words_from_segments(segs)
+    if translate and s["use_words"]:
+        rep.set("words")
+        try:
+            words = _spoken_words(path, lang, s["model"], sens, voice_used, wav, loose, env, regions,
+                                  progress=lambda f: rep.set("words", f), log=rep.log, use_cache=use_cache)
+        except Exception as e:  # never fatal: the cut still works from the translation
+            rep.log(f"Could not read the {lang} words ({e}); restarts inside sentences are not checked")
+
     # analysis
     rep.set("analyse")
     phrases = build_phrases(segs)
+    if translate and words:
+        starts = [(w["start"] + w["end"]) / 2 for w in words]
+        for p in phrases:
+            p["words"] = words[bisect_left(starts, p["start"]):bisect_left(starts, p["end"])]
     if s["footage"] == "screen":
         untranscribed = []
     else:
@@ -240,7 +269,7 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
         untranscribed += [(a, b) for a, b in nonvoice if b - a >= 0.15 and
                           not any(p["start"] - 0.2 < b and p["end"] + 0.2 > a for p in phrases)]
         untranscribed.sort()
-    decisions = analyze(phrases, untranscribed, translate_mode=translate, regions=regions)
+    decisions = analyze(phrases, untranscribed, translate_mode=translate, regions=regions, words=words)
     if voice_used:
         for d in decisions:
             if d["kind"] == "sound" and any(a <= d["start"] + 0.01 and b >= d["end"] - 0.01 for a, b in nonvoice):
@@ -297,26 +326,19 @@ def analyze_file(path: str, settings: dict, rep: Reporter = None, use_cache: boo
         "learned": learned,
         "transcribe_seconds": tr.get("seconds"),
         "_env": env,
-        "_words": None if translate else words_from_segments(segs),
+        "_words": words,
         "_speech": {"wav": wav, "loose": loose, "voice_used": voice_used, "sens": sens, "model": s["model"]},
     }
 
 
 def original_words(analysis: dict, progress=None, log=print, use_cache: bool = True) -> list:
-    """Words in the spoken language with source times (Hindi script for Hindi). Cached per file."""
+    """Words in the spoken language with source times (Hindi letters for Hindi). Cached per file."""
     if analysis.get("_words") is not None:
         return analysis["_words"]
-    sp, lang = analysis["_speech"], analysis["language"]
-    model = pick_model(sp["model"], translate=False, language=lang)
-    tpath = os.path.join(cache_dir_for(analysis["path"]),
-                         _transcript_key(model, lang, False, sp["sens"], sp["voice_used"]))
-    tr = _load_json(tpath) if use_cache else None
-    if not tr:
-        log(f"{analysis['name']}: writing the {lang} script with {os.path.basename(model)}")
-        env = analysis["_env"]
-        tr = _transcribe(log, sp["wav"], sp["loose"], env.duration, env, model, lang, False, progress=progress)
-        _save_json(tpath, tr)
-    analysis["_words"] = words_from_segments(clean_segments(tr["raw"], analysis["regions"]))
+    sp = analysis["_speech"]
+    analysis["_words"] = _spoken_words(analysis["path"], analysis["language"], sp["model"], sp["sens"],
+                                       sp["voice_used"], sp["wav"], sp["loose"], analysis["_env"], analysis["regions"],
+                                       progress=progress, log=log, use_cache=use_cache)
     return analysis["_words"]
 
 

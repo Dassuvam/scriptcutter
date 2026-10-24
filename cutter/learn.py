@@ -24,11 +24,12 @@ CATEGORIES = [
     ("Contains a restart cue", "cue"), ("Filler", "filler"), ("Very short isolated", "stray"),
     ("Sound with no recognisable", "sound"), ("Short noise", "noise"), ("Non-speech sound", "noise"),
     ("unreliable", "loop"), ("talking but only", "sparse"), ("repeated line", "repeat_line"),
-    ("Started this line", "restart_inline"), ("AI reviewer", "ai"),
+    ("Started this line", "restart_inline"), ("Dropped attempt", "dropped"), ("AI reviewer", "ai"),
 ]
 LABELS = {"retake": "repeated lines", "block": "re-recorded sections", "cue": "restart cues", "filler": "fillers",
           "stray": "tiny stray sounds", "sound": "wordless sounds", "noise": "noises", "loop": "garbled transcript",
           "sparse": "mumbled stretches", "repeat_line": "repeats inside a line", "restart_inline": "mid-line restarts",
+          "dropped": "dropped attempts",
           "ai": "AI-only flags"}
 
 

@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(ROOT, "tests"))
 from cutter import analyze as an  # noqa: E402
 import xml.etree.ElementTree as ET  # noqa: E402
 
-from cutter import cuts, exporters, llm, paths, resolve_bridge, text, translit  # noqa: E402
+from cutter import cuts, exporters, llm, paths, resolve_bridge, restarts, text, translit  # noqa: E402
 from cutter import edit as edit_doc  # noqa: E402
 from cutter.exporters.transcript import _srt_time, plain_text  # noqa: E402
 from cutter.project import Project  # noqa: E402
@@ -275,6 +275,38 @@ class TranslitTests(unittest.TestCase):
     def test_detects_script(self):
         self.assertTrue(translit.has_devanagari("ok नमस्ते"))
         self.assertFalse(translit.has_devanagari("namaste"))
+
+
+def spoken(text, t0, step=0.3):
+    """Timed words, one every `step` seconds."""
+    return [{"w": w, "start": round(t0 + i * step, 2), "end": round(t0 + i * step + 0.25, 2)}
+            for i, w in enumerate(text.split())]
+
+
+class RestartTests(unittest.TestCase):
+    def test_dropped_attempt_and_scrap_before_it(self):
+        words = spoken("and मैं", 7) + spoken("and मेरे को जो सबसे बड़ी", 9) + \
+            spoken("और मेरे को जो पूछ सबसे अच्छा लगेगा मैं उसको रीशेयर करूँगा", 12)
+        found = sorted(restarts.find(words), key=lambda r: r["start"])
+        self.assertEqual([r["start"] for r in found], [7, 9])
+        self.assertGreaterEqual(found[1]["confidence"], 0.75)  # cut under Balanced
+        self.assertLess(found[1]["end"], 12)
+
+    def test_end_of_a_line_said_again(self):
+        words = spoken("तो आप नीचे comments में डाल सकते हैं, and also आपको description में है न,", 0) + \
+            spoken("and also आपको description में ये जो video है इसका सारा assets मिल जाएगा", 7)
+        (r,) = restarts.find(words)
+        self.assertEqual(r["start"], words[8]["start"])  # from "and also", the comments line stays
+        self.assertGreaterEqual(r["confidence"], 0.75)
+
+    def test_parallel_sentences_are_not_restarts(self):
+        words = spoken("agar aapko ye video pasand aaya to like kar dena.", 0) + \
+            spoken("agar aapko ye video pasand nahi aaya to comment karke batana.", 4)
+        self.assertEqual(restarts.find(words), [])
+
+    def test_hindi_and_english_spelling_match(self):
+        words = spoken("content creation वीडियो editing या AI", 0) + spoken("content creation video editing AI for creators", 4)
+        self.assertEqual(len(restarts.find(words)), 1)
 
 
 class ProjectTests(unittest.TestCase):

@@ -74,17 +74,20 @@ def build_clips(decisions: list, regions: list, env, settings: dict = None,
                               "ids": [d["id"]], "reasons": [d["reason"]] if d["action"] == "review" else [],
                               "text": d.get("text", "")})
                 continue
+            # edges inside the phrase are where a review item begins or ends: they stay put ("fixed")
             cur = a
             for x in sorted(inner, key=lambda x: x["start"]):
                 if x["start"] > cur:
                     units.append({"start": cur, "end": x["start"], "status": "keep", "ids": [d["id"]],
-                                  "reasons": [], "text": d.get("text", "")})
-                units.append({"start": max(cur, x["start"]), "end": min(b, x["end"]), "status": "review",
-                              "ids": [x["id"]], "reasons": [x["reason"]], "text": x.get("text", "")})
-                cur = min(b, x["end"])
+                                  "reasons": [], "text": d.get("text", ""), "fixed": (cur > a, True)})
+                if min(b, x["end"]) > max(cur, x["start"]):
+                    units.append({"start": max(cur, x["start"]), "end": min(b, x["end"]), "status": "review",
+                                  "ids": [x["id"]], "reasons": [x["reason"]], "text": x.get("text", ""),
+                                  "fixed": (x["start"] > a, x["end"] < b)})
+                cur = max(cur, min(b, x["end"]))
             if cur < b:
                 units.append({"start": cur, "end": b, "status": "keep", "ids": [d["id"]], "reasons": [],
-                              "text": d.get("text", "")})
+                              "text": d.get("text", ""), "fixed": (cur > a, False)})
 
     units = [u for u in units if u["end"] - u["start"] > 0.04]
     units.sort(key=lambda u: u["start"])
@@ -94,11 +97,12 @@ def build_clips(decisions: list, regions: list, env, settings: dict = None,
     # that Whisper's timestamps clipped), but never into a removed item
     fences = [(r["start"], r["end"]) for r in removed]
     for u in units:
+        fixed_start, fixed_end = u.pop("fixed", (False, False))
         for a, b in regions:
-            if a <= u["start"] + 0.02 < b:
+            if not fixed_start and a <= u["start"] + 0.02 < b:
                 new = max(a, max([f1 for f0, f1 in fences if f1 <= u["start"] + 0.01] or [lo]), lo)
                 u["start"] = min(u["start"], new)
-            if a < u["end"] - 0.02 <= b:
+            if not fixed_end and a < u["end"] - 0.02 <= b:
                 new = min(b, min([f0 for f0, f1 in fences if f0 >= u["end"] - 0.01] or [hi]), hi)
                 u["end"] = max(u["end"], new)
     for i in range(1, len(units)):

@@ -33,7 +33,7 @@ const state = {
 
 const STAGES = {
   audio: "Reading audio", levels: "Measuring levels", language: "Detecting language",
-  transcribe: "Transcribing", analyse: "Finding retakes", video: "Checking the screen", ai: "AI second opinion",
+  transcribe: "Transcribing", words: "Reading the words in your language", analyse: "Finding retakes", video: "Checking the screen", ai: "AI second opinion",
 };
 const SEND_LABELS = {
   resolve: "Create timeline in Resolve", premiere: "Save for Premiere Pro", fcp: "Save for Final Cut Pro", edl: "Save EDL",
