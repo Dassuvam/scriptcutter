@@ -113,8 +113,9 @@ def build(out_dir: str = DIST) -> list:
             f.write(f"{digest}  {os.path.basename(path)}\n")
     with open(os.path.join(out_dir, "RELEASE_NOTES.md"), "w", encoding="utf-8") as f:
         f.write(release_notes(version))
-    for path in built:
-        print(f"Built {os.path.relpath(path, ROOT)} ({os.path.getsize(path) // 1024} KB), version {version}")
+    for path in built:  # (a folder on another Windows drive has no path relative to this one)
+        shown = os.path.relpath(path, ROOT) if path.startswith(ROOT + os.sep) else path
+        print(f"Built {shown} ({os.path.getsize(path) // 1024} KB), version {version}")
     return built
 
 
