@@ -49,9 +49,12 @@ def parse_args():
     ap.add_argument("--llm-model")
     ap.add_argument("--llm-url")
     ap.add_argument("--api-key")
-    ap.add_argument("--checkerboard", action="store_true", help="alternate clips on V1/V2 with a small overlap")
+    ap.add_argument("--checkerboard", action=argparse.BooleanOptionalAction, default=True,
+                    help="alternate clips on V1/V2 with a small overlap (on by default)")
     ap.add_argument("--overlap-frames", type=int, default=3)
-    ap.add_argument("--voice-isolation", action="store_true", help="Resolve Studio only")
+    ap.add_argument("--voice-isolation", action=argparse.BooleanOptionalAction, default=True,
+                    help="AI Voice Isolation on the new timeline's audio tracks (Resolve Studio; on by default)")
+    ap.add_argument("--markers", action=argparse.BooleanOptionalAction, default=True, help="markers on brown clips")
     ap.add_argument("--xml", help="write a Premiere Pro XML (FCP7 XML) here")
     ap.add_argument("--fcpxml", help="write a Final Cut Pro FCPXML here")
     ap.add_argument("--edl", help="write an EDL here")
@@ -107,11 +110,15 @@ def main():
             print(f"{exporters.FORMATS[fmt]['label']} written: {path}")
     if args.command == "resolve":
         res = resolve_bridge.build(result["plan"], edit["name"], checkerboard=args.checkerboard,
-                                   overlap_frames=args.overlap_frames, voice_isolation=args.voice_isolation)
+                                   overlap_frames=args.overlap_frames, voice_isolation=args.voice_isolation,
+                                   markers=args.markers)
         if res.get("pending"):
             print(res["message"])
         elif res.get("ok"):
-            print(f"Created timeline '{res['timeline']}': {res['items']} clips, {res['review_markers']} review markers")
+            print(f"Created timeline '{res['timeline']}': {res['items']} clips, {res['review_markers']} review markers"
+                  + (", A/B overlap" if args.checkerboard else "")
+                  + {True: ", Voice Isolation on", False: ", Voice Isolation needs Resolve Studio", None: ""}[
+                      res.get("voice_isolation")])
         else:
             sys.exit(f"Timeline was not created: {res.get('error')}")
 

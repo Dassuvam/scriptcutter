@@ -80,8 +80,7 @@ class CutStep(Step):
             s["fps"] = s.get("fps") or p.analyses[s["path"]]["info"]["fps"] or 25.0
         if p.settings.get("script", "").strip():
             p.script = scriptmatch.apply(p.sources, p.analyses, p.settings["script"])
-            p.rep.log(f"Script: {p.script['found']} of {p.script['lines']} lines found in the recording"
-                      + (f", {p.script['weak']} unsure" if p.script.get("weak") else ""))
+            p.rep.log(f"Script: {p.script['found']} of {p.script['lines']} lines found in the recording")
         p.replan()
         p.rep.file_index = p.rep.file_count
         st = p.result["stats"]

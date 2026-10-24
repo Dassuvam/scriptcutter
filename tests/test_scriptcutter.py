@@ -338,6 +338,22 @@ class ScriptModeTests(unittest.TestCase):
         self.assertTrue(0.45 <= conf["p0006"] < 0.75)           # unscripted aside: brown
         self.assertEqual(conf["p0007"], 0.0)                    # line 3 said in Hinglish
 
+    def test_whisper_spellings_sound_the_same(self):
+        same = [("nekst", "next"), ("stoori", "story"), ("riseyar", "reshare"), ("achha", "accha"), ("karoonga", "karunga")]
+        for a, b in same:
+            self.assertEqual(scriptmatch.sound_key(a), scriptmatch.sound_key(b), (a, b))
+        self.assertNotEqual(scriptmatch.sound_key("video"), scriptmatch.sound_key("camera"))
+
+    def test_later_take_is_never_cut(self):
+        words = spoken("chalo shuru karte hain aaj ka video", 0) + spoken("chalo shuru karte hain", 5)
+        phrases = [{"id": "p0001", "start": 0, "end": 2.2, "text": "", "p": 0.9, "flags": []},
+                   {"id": "p0002", "start": 5, "end": 6.2, "text": "", "p": 0.9, "flags": []}]
+        a = {"path": "/x", "language": "hi", "translated": False, "info": {"duration": 9.0}, "phrases": phrases,
+             "decisions": [], "_words": words}
+        scriptmatch.apply([{"path": "/x", "start_sec": 0, "end_sec": None}], {"/x": a}, "Chalo shuru karte hain aaj ka video.")
+        later = next(d for d in a["decisions"] if d["id"] == "p0002")
+        self.assertLess(later["confidence"], 0.75)  # weaker, but later: brown at most, never cut
+
     def test_lines_split_at_sentence_ends(self):
         self.assertEqual(len(scriptmatch.split_lines("Hello there. How are you?\nठीक है। चलो")), 4)
 

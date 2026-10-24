@@ -48,6 +48,9 @@ const FOOTAGE_HINTS = {
 const SETTINGS_FIELDS = ["track", "filePath", "language", "textMode", "model", "sensitivity", "maxPause", "headPad",
   "tailPad", "topic", "llmUrl", "overlap", "script"];
 const SETTINGS_CHECKS = ["markers", "checkerboard", "voiceIsolation"];
+// bump when a default changes, so an old saved choice does not hide the new default
+const SETTINGS_VERSION = 2;
+const NEW_DEFAULTS = { 2: ["checkerboard", "voiceIsolation"] };  // version -> checks that became on
 
 // ---------------------------------------------------------------- helpers
 const escapeHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -133,7 +136,8 @@ document.addEventListener("keydown", (e) => {
 
 // ---------------------------------------------------------------- settings
 function saveSettings() {
-  const saved = { source: state.source, footage: state.footage, policy: state.policy, provider: $("provider").value };
+  const saved = { v: SETTINGS_VERSION, source: state.source, footage: state.footage, policy: state.policy,
+    provider: $("provider").value };
   SETTINGS_FIELDS.forEach((id) => { saved[id] = $(id).value; });
   SETTINGS_CHECKS.forEach((id) => { saved[id] = $(id).checked; });
   store.set("settings", saved);
@@ -149,7 +153,8 @@ function loadSettings() {
   if (!s) return;
   Object.assign(state, { source: s.source || "resolve", footage: s.footage || "talking_head", policy: s.policy || "balanced" });
   SETTINGS_FIELDS.forEach((id) => { if (s[id] !== undefined && s[id] !== null && id !== "model") $(id).value = s[id]; });
-  SETTINGS_CHECKS.forEach((id) => { if (s[id] !== undefined) $(id).checked = s[id]; });
+  const renewed = Object.entries(NEW_DEFAULTS).filter(([v]) => (s.v || 1) < +v).flatMap(([, ids]) => ids);
+  SETTINGS_CHECKS.forEach((id) => { if (s[id] !== undefined && !renewed.includes(id)) $(id).checked = s[id]; });
   state.savedModel = s.model;
   state.savedProvider = s.provider;
 }
@@ -389,7 +394,6 @@ function renderStats(R) {
     p.className = "learned";
     const missing = (S.missing || []).slice(0, 3).map((m) => `line ${m.n} "${escapeHtml(m.text.slice(0, 50))}"`).join(", ");
     p.innerHTML = `Script: <b>${S.found} of ${S.lines}</b> lines found in the recording`
-      + (S.weak ? ` · ${S.weak} unsure (brown)` : "")
       + (missing ? ` · Not found: ${missing}${S.missing.length > 3 ? ` and ${S.missing.length - 3} more` : ""}` : "");
     $("stats").appendChild(p);
   }

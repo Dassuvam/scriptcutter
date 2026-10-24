@@ -7,8 +7,12 @@ when the normal retake analysis already cuts it (it was said again later), and
 stays brown when it is a longer new stretch, which may be a good ad-lib.
 
 Lines are compared with the spoken words in Hinglish letters (translit.py), so a
-Devanagari script matches Hinglish speech and the other way round. An English
-script for Hindi speech is compared with Whisper's English translation instead.
+Devanagari script matches Hinglish speech and the other way round, and by sound
+(sound_key), so Whisper's spellings match: nekst / next, stoori / story,
+accha / achha. An English script for Hindi speech is compared with Whisper's
+English translation instead. Creators rarely read word for word, so a take is
+judged by how much of the line it covers, and anything unclear stays brown:
+script mode never cuts a later take, only earlier and unfinished ones.
 
 apply() replaces each file's retake decisions with script decisions and returns
 a summary: how many lines were found, and which were not.
@@ -22,14 +26,15 @@ from difflib import SequenceMatcher
 from .text import STOPWORDS, restart_cue, tokens
 from .translit import to_hinglish
 
-MATCH, NEAR, MISS = 2.0, 1.0, -1.0
-SKIP_SCRIPT, SKIP_SPOKEN = -1.0, -0.5  # a script word not said / an extra spoken word inside a take
-FULL_TAKE = 0.45       # share of a perfect match for a take of the line
-PARTIAL_TAKE = 0.25    # weaker matches are unfinished takes (cut)
-CLOSE = 0.12           # the last take wins unless an earlier one is this much better
-WEAK = 0.6             # a kept take below this stays brown
-AD_LIB = 6             # unscripted speech of this many words stays brown
+MATCH, SOUND, NEAR, MISS = 2.0, 1.8, 1.0, -1.5  # a wrong word costs more than skipping one
+SKIP_SCRIPT, SKIP_SPOKEN = -1.0, -1.0  # a script word not said / an extra spoken word inside a take
+FULL_TAKE = 0.45       # share of the line's words said: a take of the line
+PARTIAL_TAKE = 0.3     # less: an unfinished take
+LAST_WINS = 0.75       # the last full take is kept unless it covers less than this share of the best one
+RUN_GAP = 0.5          # words closer than this belong to the same attempt
 EDGE = 0.12
+KEY_RULES = [("x", "ks"), ("chh", "c"), ("ch", "c"), ("kh", "k"), ("gh", "g"), ("th", "t"), ("dh", "d"),
+             ("bh", "b"), ("ph", "f"), ("sh", "s"), ("w", "v"), ("z", "j"), ("q", "k"), ("ck", "k")]
 SPLIT = re.compile(r"(?<=[.!?।॥])\s+|\n+")
 
 
@@ -43,57 +48,84 @@ def split_lines(script: str) -> list:
     return out
 
 
+def sound_key(tok: str) -> str:
+    """How a Hinglish word sounds, roughly: consonants without doubling, vowels dropped after the first letter."""
+    t = tok.lower()
+    for a, b in KEY_RULES:
+        t = t.replace(a, b)
+    t = re.sub(r"(.)\1+", r"\1", t)
+    return t[:1] + re.sub(r"[aeiouy]", "", t[1:])
+
+
 class _Similar:
-    """Token similarity, cached: equal, close in spelling (vidio / video), or different."""
+    """Token similarity, cached: equal, same sound (nekst / next), close (vidio / videos), or different."""
 
     def __init__(self):
-        self.cache = {}
+        self.cache, self.keys = {}, {}
+
+    def key(self, t: str) -> str:
+        if t not in self.keys:
+            self.keys[t] = sound_key(t)
+        return self.keys[t]
 
     def __call__(self, a: str, b: str) -> float:
         if a == b:
             return MATCH
-        key = (a, b)
-        if key not in self.cache:
-            close = min(len(a), len(b)) >= 3 and SequenceMatcher(None, a, b).ratio() >= 0.75
-            self.cache[key] = NEAR if close else MISS
-        return self.cache[key]
+        pair = (a, b)
+        if pair not in self.cache:
+            ka, kb = self.key(a), self.key(b)
+            if len(ka) >= 2 and ka == kb:
+                self.cache[pair] = SOUND
+            elif min(len(ka), len(kb)) >= 3 and SequenceMatcher(None, ka, kb).ratio() >= 0.75:
+                self.cache[pair] = NEAR
+            else:
+                self.cache[pair] = MISS
+        return self.cache[pair]
+
+
+def _best_take(line: list, stream: list, sim) -> tuple:
+    """The strongest place the line was said: (i0, i1, coverage) or None. Masked words (None) can't be used."""
+    m, n = len(line), len(stream)
+    prev, prev_start, prev_hit = [0.0] * (n + 1), list(range(n + 1)), [0.0] * (n + 1)
+    for a in range(1, m + 1):
+        cur, cur_start, cur_hit = [prev[0] + SKIP_SCRIPT] + [0.0] * n, [0] * (n + 1), [0.0] * (n + 1)
+        word = line[a - 1]
+        for b in range(1, n + 1):
+            spoken = stream[b - 1]
+            s = sim(word, spoken) if spoken is not None else -10.0
+            best, st, hit = prev[b - 1] + s, prev_start[b - 1], prev_hit[b - 1] + (1.0 if s >= SOUND else 0.5 if s > 0 else 0)
+            up = prev[b] + SKIP_SCRIPT
+            if up > best:
+                best, st, hit = up, prev_start[b], prev_hit[b]
+            left = cur[b - 1] + (SKIP_SPOKEN if spoken is not None else -10.0)
+            if left > best:
+                best, st, hit = left, cur_start[b - 1], cur_hit[b - 1]
+            cur[b], cur_start[b], cur_hit[b] = best, st, hit
+        prev, prev_start, prev_hit = cur, cur_start, cur_hit
+    b = max(range(1, n + 1), key=lambda b: (prev[b], -b))  # the strongest end; the earliest on a tie
+    if prev[b] <= 0 or prev_hit[b] < 2 or prev_hit[b] / m < PARTIAL_TAKE or b - prev_start[b] < 2:
+        return None
+    return prev_start[b], b, round(prev_hit[b] / m, 3)
 
 
 def takes(line: list, stream: list, sim=None) -> list:
     """
-    Every place the line was said: [(i0, i1, score)] over stream[i0:i1], score 0..1
-    (1 = every word, in order, nothing extra). The whole line is aligned against any
-    stretch of the stream (Smith-Waterman style, with the line matched end to end).
+    Every place the line was said: [(i0, i1, coverage)] over stream[i0:i1]; coverage is the
+    share of the line's words found there, in order (1 = all of them). The whole line is
+    aligned against any stretch of the stream (Smith-Waterman style, line matched end to end);
+    the strongest take is found, blanked out, and the search repeats (Waterman-Eggert).
     """
     sim = sim or _Similar()
-    m, n = len(line), len(stream)
-    if not m or not n:
+    if not line or not stream:
         return []
-    prev, prev_start = [0.0] * (n + 1), list(range(n + 1))
-    for a in range(1, m + 1):
-        cur, cur_start = [prev[0] + SKIP_SCRIPT] + [0.0] * n, [0] * (n + 1)
-        word = line[a - 1]
-        for b in range(1, n + 1):
-            best, st = prev[b - 1] + sim(word, stream[b - 1]), prev_start[b - 1]
-            up = prev[b] + SKIP_SCRIPT
-            if up > best:
-                best, st = up, prev_start[b]
-            left = cur[b - 1] + SKIP_SPOKEN
-            if left > best:
-                best, st = left, cur_start[b - 1]
-            cur[b], cur_start[b] = best, st
-        prev, prev_start = cur, cur_start
-    top = MATCH * m
-    found = []
-    for b in range(1, n + 1):
-        s = prev[b] / top
-        if s >= PARTIAL_TAKE and s >= prev[b - 1] / top and (b == n or s > prev[b + 1] / top):
-            found.append((prev_start[b], b, round(s, 3)))
-    chosen = []
-    for t in sorted(found, key=lambda t: -t[2]):  # best first, no overlaps
-        if t[1] - t[0] >= 2 and all(t[1] <= c[0] or t[0] >= c[1] for c in chosen):
-            chosen.append(t)
-    return sorted(chosen)
+    stream, found = list(stream), []
+    for _ in range(12):
+        t = _best_take(line, stream, sim)
+        if not t:
+            break
+        found.append(t)
+        stream[t[0]:t[1]] = [None] * (t[1] - t[0])
+    return sorted(found)
 
 
 def _streams(sources: list, analyses: dict) -> tuple:
@@ -132,20 +164,21 @@ def _intervals(lines: list, words: list, english: list) -> tuple:
         else:
             found += 1
         top = max([t[2] for t in full] or [0])
-        keep = next((t for t in reversed(full) if t[2] >= top - CLOSE), None)
+        keep = next((t for t in reversed(full) if t[2] >= LAST_WINS * top), None)
         label = _label(line)
         for t in best_takes:
             u0, u1 = best_stream[t[0]], best_stream[t[1] - 1]
-            if t is keep:
-                weak = t[2] < WEAK
-                out.append({"path": u0["path"], "t0": u0["t0"], "t1": u1["t1"], "keep": True, "score": t[2],
-                            "confidence": 0.6 if weak else 0.0,
-                            "reason": f"Unsure match to script {label} - check it" if weak else ""})
-            else:
-                kind = "Unfinished take" if t[2] < FULL_TAKE else ("Earlier take" if t[0] < keep[0] else "Weaker take")
-                out.append({"path": u0["path"], "t0": u0["t0"], "t1": u1["t1"], "keep": False, "score": t[2],
-                            "confidence": 0.92 if t[2] >= FULL_TAKE else 0.85,
-                            "reason": f"{kind} of script {label} - keeping the best take"})
+            iv = {"path": u0["path"], "t0": u0["t0"], "t1": u1["t1"], "score": t[2]}
+            if t is keep:  # said in your own words is fine: keeping is never the risky choice
+                iv.update(keep=True, confidence=0.0, reason="")
+            elif keep is not None and t[0] < keep[0]:
+                kind = "Earlier take" if t[2] >= FULL_TAKE else "Unfinished take"
+                iv.update(keep=False, confidence=0.92 if t[2] >= FULL_TAKE else 0.85,
+                          reason=f"{kind} of script {label} - keeping the later take")
+            else:  # after the kept take, or a line never said in full: never cut on the script alone
+                iv.update(keep=False, confidence=0.6,
+                          reason=f"Another take of script {label} - check which one you want")
+            out.append(iv)
     return out, missing, found
 
 
@@ -189,6 +222,27 @@ def _label_words(path: str, a: dict, ranges: list, intervals: list, lines: list)
             out.append([w, iv["confidence"], iv["reason"]])
         else:
             out.append([w, None, ""])
+    def joined(w1, w2):
+        return w2["start"] - max(w1["end"], w1["start"] + 0.2) < RUN_GAP
+
+    for k in [k for k in range(len(out)) if out[k][1] is not None and out[k][1] < 0.75]:  # takes as found, once
+        for step in (-1, 1):
+            n, j = 0, k + step
+            while 0 <= j < len(out) and out[j][1] is None and n < 4 and \
+                    joined(*((out[j][0], out[j - step][0]) if step < 0 else (out[j - step][0], out[j][0]))):
+                out[j][1], out[j][2] = out[k][1], out[k][2]
+                n, j = n + 1, j + step
+
+    # a false start inside a kept take is still cut ("content creation video editing ya AI |
+    # content creation video editing AI for creators"): the word-level restarts of the analysis
+    restarts_found = [d for d in a["decisions"] if d["kind"] == "restart" and d["confidence"] >= 0.75]
+    for x in out:
+        if x[1] == 0.0:
+            mid = (x[0]["start"] + x[0]["end"]) / 2
+            hit = next((d for d in restarts_found if d["start"] <= mid < d["end"]), None)
+            if hit:
+                x[1], x[2] = hit["confidence"], hit["reason"]
+
     # speech that is in no take: what the retake analysis cuts (said again later) is cut; of the rest,
     # short bits are cut and longer new stretches may be a good ad-lib
     for x in out:
@@ -212,10 +266,10 @@ def _label_words(path: str, a: dict, ranges: list, intervals: list, lines: list)
         elif retaken:
             why = max((x[3] for x in out[i:j]), key=lambda v: v[0])[1]
             conf, reason = 0.9, f"Not in your script, and {why[0].lower()}{why[1:]}"
-        elif len(toks) >= AD_LIB and len(content) >= 2 and not restart_cue(text):
-            conf, reason = 0.6, "Not in your script - keep it if it is a good ad-lib"
-        else:
+        elif restart_cue(text) or not content:
             conf, reason = 0.9, "Not in your script"
+        else:  # when unsure, keep it brown
+            conf, reason = 0.6, "Not in your script - keep it if it is a good ad-lib"
         for x in out[i:j]:
             x[1], x[2] = conf, reason
             del x[3:]
@@ -224,17 +278,28 @@ def _label_words(path: str, a: dict, ranges: list, intervals: list, lines: list)
 
 
 def _spans(labelled: list, ranges: list) -> list:
-    """Runs of words with the same decision -> time spans; a cut takes the pause after it."""
+    """
+    Runs of words with the same decision -> time spans. Spans of one breath touch (no gap
+    for a word to fall into); across a pause, a cut takes the pause with it.
+    """
     spans = []
     for k, (w, conf, reason) in enumerate(labelled):
         nxt = labelled[k + 1][0] if k + 1 < len(labelled) else None
         same_range = nxt is not None and any(lo <= w["start"] < hi and lo <= nxt["start"] < hi for lo, hi in ranges)
-        end = nxt["start"] - EDGE if same_range and conf else max(w["end"], w["start"] + 0.2)
+        if same_range and nxt["start"] - max(w["end"], w["start"] + 0.2) < RUN_GAP:
+            end = nxt["start"]
+        elif same_range and conf >= 0.75:
+            end = nxt["start"] - EDGE
+        else:
+            end = max(w["end"], w["start"] + 0.2)
         if spans and spans[-1]["confidence"] == conf and spans[-1]["reason"] == reason and spans[-1]["joined"]:
             spans[-1].update(end=max(spans[-1]["end"], end), joined=same_range)
             spans[-1]["words"].append(w["w"])
         else:
-            spans.append({"start": w["start"], "end": max(w["start"] + 0.05, end), "confidence": conf,
+            # right after a cut that took the pause, start where the cut ends: no sliver between them
+            start = spans[-1]["end"] if spans and spans[-1]["joined"] and spans[-1]["confidence"] >= 0.75 \
+                and spans[-1]["end"] < w["start"] else w["start"]
+            spans.append({"start": start, "end": max(w["start"] + 0.05, end), "confidence": conf,
                           "reason": reason, "words": [w["w"]], "joined": same_range})
     return spans
 
@@ -273,5 +338,4 @@ def apply(sources: list, analyses: dict, script: str) -> dict:
                                       "text": " ".join(s["words"]), "confidence": s["confidence"],
                                       "reason": s["reason"], "ref": None, "script": True})
         a["decisions"] = decisions
-    return {"lines": len(lines), "found": found, "missing": missing,
-            "weak": sum(1 for iv in intervals if iv["keep"] and iv["confidence"])}
+    return {"lines": len(lines), "found": found, "missing": missing}

@@ -146,8 +146,8 @@ def timeline_sources(track: int = 1) -> tuple:
 
 
 # --------------------------------------------------------------------------- building
-def build(plan_clips: list, name: str, checkerboard: bool = False, overlap_frames: int = 3,
-          voice_isolation: bool = False, markers: bool = True) -> dict:
+def build(plan_clips: list, name: str, checkerboard: bool = True, overlap_frames: int = 3,
+          voice_isolation: bool = True, markers: bool = True) -> dict:
     """
     Builds the timeline right away with Resolve Studio. Otherwise saves the plan
     and returns {"pending": True, ...} until the user runs the Build menu entry.
