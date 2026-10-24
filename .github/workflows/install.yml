@@ -82,3 +82,44 @@ jobs:
           "y`ny`n" | py -3 "$env:LOCALAPPDATA\ScriptCutter\App\uninstall.py"
           if (Test-Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ScriptCutter) { throw "still in Settings > Apps" }
           if (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) "ScriptCutter.lnk")) { throw "shortcut left" }
+
+  # The one-line installs from the website, exactly as a user pastes them, against the published release.
+  # Run by hand (Actions > install > Run workflow) after a release.
+  mac-online:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - name: curl ... | bash
+        run: curl -fsSL https://github.com/Dassuvam/scriptcutter/releases/latest/download/install-mac.sh | bash 2>&1 | tee install.log
+      - name: Check that ScriptCutter is installed and open
+        run: |
+          grep -q "speech recognition works" install.log
+          test -d "$HOME/Applications/ScriptCutter.app"
+          curl -s http://127.0.0.1:7870/api/status > status.json
+          /usr/bin/python3 -c "import json; s = json.load(open('status.json')); print(s); assert s['whisper'] and s['ffmpeg'] and s['models']"
+
+  windows-online:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]  # Windows PowerShell 5.1 (built in) and PowerShell 7
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - name: irm ... | iex
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: irm https://github.com/Dassuvam/scriptcutter/releases/latest/download/install-windows.ps1 | iex
+      - name: Check that ScriptCutter is installed and open
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($f in @("$env:LOCALAPPDATA\ScriptCutter\App\launcher.py",
+                           (Join-Path ([Environment]::GetFolderPath('Programs')) "ScriptCutter.lnk"))) {
+            if (-not (Test-Path $f)) { throw "missing: $f" }
+          }
+          $s = Invoke-RestMethod http://127.0.0.1:7870/api/status
+          $s | ConvertTo-Json -Depth 3
+          if (-not ($s.whisper -and $s.ffmpeg -and $s.models.Count)) { throw "ScriptCutter is not complete" }
